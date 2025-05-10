@@ -47,8 +47,7 @@ def calculate_atomic_charges(atomic_numbers, orbital_charges):
     if not isinstance(orbital_charges, np.ndarray):
         raise TypeError("Input 'orbital_charges' must be a NumPy array.")
     
-    orbitals_per_atom_type = {1: 2, 6: 4, 7: 4, 8: 4}
-
+    orbitals_per_atom_type = {1: 2, 6: 4, 7: 4, 8: 4, 9: 4}
 
     # Ensure atomic_numbers is a NumPy array for easier handling if needed
     atomic_numbers = np.array(atomic_numbers, dtype=int) # Ensure integer type
