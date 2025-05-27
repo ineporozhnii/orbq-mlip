@@ -5,7 +5,8 @@ import tempfile
 import json
 import torch
 import numpy as np
-
+import dxtb
+from dxtb_experiments.utils import dxtb_to_escn_orbitals
 import ase
 from ase.calculators.vasp import VaspChargeDensity
 from pyrho.charge_density import ChargeDensity
@@ -109,9 +110,17 @@ def read_npz(filecontent):
     atomic_numbers = torch.from_numpy(data["numbers"]).long()
     cart_coords = torch.from_numpy(data["coord"]).float()
     orbital_charges = torch.from_numpy(data["final_charges"]).float()
-    cell = torch.tensor([[10, 0, 0],
-                         [0, 10, 0],
-                         [0, 0, 10]]).float()
+    cell = torch.tensor([[100, 0, 0],
+                         [0, 100, 0],
+                         [0, 0, 100]]).float()
+    
+    calc = dxtb.calculators.GFN1Calculator(atomic_numbers)
+    orbital_charges = dxtb_to_escn_orbitals(
+        angular_momentum_per_shell=calc.ihelp.angular,
+        property_tensor=orbital_charges,
+        map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
+        map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
+    )  # convert orbital charges ordering to escn format
 
     return atomic_numbers, cart_coords, cell, orbital_charges, None
 
