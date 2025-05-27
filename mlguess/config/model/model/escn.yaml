@@ -1,7 +1,7 @@
   _target_: mlguess.model.scn.eSCN
   num_layers: 4
   lmax_list: [2]
-  mmax_list: [1]
+  mmax_list: [2]
   cutoff: 6.
   sphere_channels: 128
   hidden_channels: 256

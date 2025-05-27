@@ -1,6 +1,6 @@
 # metadata specialised for each experiment
 core:
-  expname: tmQMneutral_maxSCF100_K4L2_mse_loss_6k
+  expname: tmQMneutral_K4L2M2
   project_name: mlguess
   storage_dir: ${core.expname}
   version: 0.0.1
@@ -31,8 +31,8 @@ hydra:
     - override hydra_logging: none
 
 defaults:
-  - data: qm9_bond
-  - model: qm9
+  - data: tmqm
+  - model: tmqm
   - train: default
   - _self_ # as last argument to allow the override of parameters via this main config
 #    Decomment this parameter to get parallel job running
