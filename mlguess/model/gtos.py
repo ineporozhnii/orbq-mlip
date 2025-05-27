@@ -70,7 +70,7 @@ class GTOs(nn.Module):
         
         # assumes Ls are sorted
         self.n_orbitals_per_L = scatter(torch.ones_like(self.Ls), self.Ls, MAX_L+1)
-        self.outdim_per_L = self.n_orbitals_per_L #* (2 * torch.arange(MAX_L+1) + 1)
+        self.outdim_per_L = self.n_orbitals_per_L * (2 * torch.arange(MAX_L+1) + 1)
         self.irreps = o3.Irreps([(int(x), (l, 1)) for l, x in enumerate(self.n_orbitals_per_L) if x > 0])
         
         if contraction is not None:

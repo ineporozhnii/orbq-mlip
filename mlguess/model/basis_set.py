@@ -244,9 +244,9 @@ def load_xtb_basis(name):
             else:
                 for i in range(len(el_data['electron_shells'])):
                     for j in range(len(el_data['electron_shells'][i]['coefficients'])):
-                        el_data['electron_shells'][i]['coefficients'][j] = [0]*(i*2+1) #[float(c) for c in el_data['electron_shells'][i]['coefficients'][j]]
-                    el_data['electron_shells'][i]['exponents'] = [0]*(i*2+1)#[float(e) for e in el_data['electron_shells'][i]['exponents']]
-                    el_data['electron_shells'][i]['angular_momentum'] = el_data['electron_shells'][i]['angular_momentum'][0]
+                        el_data['electron_shells'][i]['coefficients'][j] = [0] #[float(c) for c in el_data['electron_shells'][i]['coefficients'][j]]
+                    el_data['electron_shells'][i]['exponents'] = [0]#[float(e) for e in el_data['electron_shells'][i]['exponents']]
+                    el_data['electron_shells'][i]['angular_momentum'] = i
                     
             combined_elements_data['elements'][z_str] = el_data
     
