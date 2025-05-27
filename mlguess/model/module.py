@@ -99,12 +99,12 @@ class ChgLightningModule(LightningModule):
         """
         coeffs, expo_scaling = self.model(batch)
         
-        n_orbs = self.n_orbitals[
-            (batch.atom_types.repeat(len(self.unique_atom_types), 1).T == 
-             self.unique_atom_types).nonzero()[:, 1]]
-        batch_n_orbs = scatter(n_orbs, batch.batch, len(batch))
-        coeffs = coeffs / batch_n_orbs.repeat_interleave(
-            batch.n_atom + batch.n_vnode).sqrt().view(-1, 1)
+        #n_orbs = self.n_orbitals[
+        #    (batch.atom_types.repeat(len(self.unique_atom_types), 1).T == 
+        #     self.unique_atom_types).nonzero()[:, 1]]
+        #batch_n_orbs = scatter(n_orbs, batch.batch, len(batch))
+        #coeffs = coeffs / batch_n_orbs.repeat_interleave(
+        #    batch.n_atom + batch.n_vnode).sqrt().view(-1, 1)
 
         if expo_scaling is not None:
             # range from 0.5 to 2.0
@@ -124,11 +124,24 @@ class ChgLightningModule(LightningModule):
             - orbitals: chg values at probe points, (M,)
         """
 
-        # Get original predictions 
+        # Charge constraint (assume 0 charge for all molecules)
+        # TODO: extend to non-zero charges
+        n_orb_per_mol = scatter(self.orb_index[batch.atom_types].sum(dim=-1), batch.batch, len(batch))
+        charges_pad = torch.zeros(self.orb_index[batch.atom_types].shape, device=coeffs.device)
+        charges_pad[torch.where(self.orb_index[batch.atom_types] == True)] = coeffs[torch.where(self.orb_index[batch.atom_types] == True)]
+        
+        mol_charges = scatter(charges_pad.sum(dim=-1), batch.batch, len(batch))
+        mol_charge_correction = mol_charges/n_orb_per_mol
+        
+        _, n_atom_per_mol = torch.unique(batch.batch, return_counts=True)
+        corrected_charges = charges_pad - torch.repeat_interleave(mol_charge_correction, n_atom_per_mol).unsqueeze(1)
+        
         mask = self.orb_index[batch.atom_types].flatten()
-        coeffs_masked = coeffs.flatten()[mask]
+        orbital_charges = corrected_charges.flatten()[mask]
+        # Get original predictions 
+        #coeffs_masked = coeffs.flatten()[mask]
 
-        pred = coeffs_masked * self.scale
+        pred = orbital_charges * self.scale
     
         return pred
     
