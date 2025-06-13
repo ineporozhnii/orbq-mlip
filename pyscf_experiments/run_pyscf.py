@@ -4,7 +4,6 @@ import pyscf
 from tqdm import tqdm
 from pyscf import lib
 import numpy as np
-from ocpmodels.datasets import LmdbDataset
 import json 
 import os
 np.random.seed(123)
@@ -14,7 +13,7 @@ def compute_dm(mo_occ, mo_coeff):
     dm = (mocc*mo_occ[mo_occ>0]).dot(mocc.conj().T)
     return dm
 
-def work_lmdb(file_path: str, file_name: str) -> LmdbDataset:
+def work_lmdb(file_path: str, file_name: str):
     lmdb_env = lmdb.open(file_path)
     lmdb_txn = lmdb_env.begin()
     lmdb_cursor = lmdb_txn.cursor()
@@ -33,8 +32,8 @@ def main():
     lib.num_threads(24)
     print("N THREADS:", lib.num_threads())
     
-    filename = None #"all_molecules.lmdb" 
-    #filename = "/home/ihor/projects/MLGuessQC/data/FEQCOT.xyz"
+    filename = "/home/ihor/projects/MLGuessQC/datasets/OMol25_dft_acceleration_estimate_npz"
+    output_dir = "pyscf_experiments/results_debug"
     
     if filename == None:
         mol = pyscf.gto.Mole()
@@ -71,17 +70,83 @@ def main():
         dm_guess = compute_dm(np.array([2., 2., 2., 2., 2., 2., 2., 0., 0., 0.]), mf.mo_coeff)
         assert np.allclose(dm_scf, dm_guess), "Density matrices do not match!"
         
-        
-        
+    elif os.path.isdir(filename) and any(".npz" in f for f in os.listdir(filename)):
+        npz_files = [f for f in os.listdir(filename) if ".npz" in f]
+        for npz_file in npz_files:
+            file_path = os.path.join(filename, npz_file)
+            data = np.load(file_path)
+            
+            numbers = data["atomic_numbers"]
+            positions = data["positions"]
+            
+            atom_symbols = [pyscf.gto.mole._symbol(int(num)) for num in numbers]
+            atom_positions = ["{:.8f} {:.8f} {:.8f}".format(*pos) for pos in positions]
+            atom_strings = [f"{symbol} {pos}" for symbol, pos in zip(atom_symbols, atom_positions)]
+            mol_string = "\n".join(atom_strings)
+            mol = pyscf.gto.Mole()
+            mol.atom = pyscf.gto.mole.fromstring(mol_string, format='raw')
+            
+            mol.basis = 'def2tzvpd'
+            mol.verbose = 5
+            mol.spin = 0
+            mf = mol.KS()
+            mf.xc = 'wb97m_v'
+            mf.max_cycle = 300
+            
+            start = time.time()
+            mf.kernel()
+            end = time.time()
+            calc_time = end - start
+                 
+            n_scf_iter = np.array([mf.cycles])
+            print()
+            init_dm = mf.dm_init
+            final_dm = mf.dm
+            final_mo_energy = mf.mo_energy
+            final_mo_coeff = mf.mo_coeff
+            final_energy = np.array([mf.e_tot])
+            calc_time = np.array([calc_time])
+            
+            save_path = os.path.join(output_dir, npz_file.replace(".npz", "_pyscf_result.npz"))
+            np.savez(save_path,
+                atomic_numbers=numbers,
+                positions=positions,
+                init_dm=init_dm,
+                final_dm=final_dm, 
+                final_mo_energy=final_mo_energy, 
+                final_mo_coeff=final_mo_coeff,
+                final_energy=final_energy,
+                n_scf_iter=n_scf_iter,
+                calc_time=calc_time,
+                charge=data["charge"],
+                spin=data["spin"],
+                OMol25_n_scf_steps=data["OMol25_n_scf_steps"],
+                OMol25_data_id=data["OMol25_data_id"],
+                OMol25_source=data["OMol25_source"]
+ 
+            )
+ 
+  
     elif filename.endswith(".xyz"):
         mol = pyscf.gto.Mole()
         mol.atom = pyscf.gto.mole.fromfile(filename)
-        mol.basis = '631g'
-        #mol.basis = 'def2svpd'
+        # mol.basis = '631g'
+        mol.basis = 'def2tzvpd'
         mol.verbose = 0
         mf = mol.KS()
-        mf.xc = 'b3lyp'
+        # mf.xc = 'b3lyp'
+        mf.xc = 'wb97m_v'
         mf.kernel()
+        
+        n_scf_iter = np.array([mf.cycles])
+        calc_time = np.array([calc_time])
+        init_dm = mf.dm_init
+        init_mo_energy = mf.mo_energy_init
+        init_mo_coeff = mf.mo_coeff_init
+        final_dm = mf.dm
+        final_mo_energy = mf.mo_energy
+        final_mo_coeff = mf.mo_coeff
+        final_energy = np.array([mf.e_tot])
     
     elif filename.endswith(".lmdb"):
         dataset = work_lmdb("/home/ihor/projects/MLGuessQC/data/quinones/", filename)
