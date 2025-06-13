@@ -4,7 +4,7 @@ from copy import deepcopy
 from mlguess.common.pyg import Data
 from mlguess.data.vnode import get_virtual_nodes
 from mlguess.data.utils import (
-    read_pmg_pkl, read_vasp, read_cube, read_json, read_npz, calculate_grid_pos, make_graph
+    read_vasp, read_cube, read_json, read_npz, calculate_grid_pos, make_graph
 )
 
 class AtomicNumberTable:
@@ -216,8 +216,7 @@ class AtomicData(Data):
         assert (fpath or (fcontent and finfo)) and not (fpath and (fcontent and finfo))
                 
         if fpath:
-            data = read_pmg_pkl(fpath)
-            metadata = fpath.split("/")[-1].split(".")[0]
+            raise NotImplementedError("fpath is not supported yet, please use fcontent and finfo instead.")
         else:
             if finfo.name.endswith((".cube", ".cube.gz", "cube.zz", ".cube.xz", "cube.lz4")):
                 data = read_cube(fcontent)

@@ -221,8 +221,6 @@ def load_xtb_basis(name):
         print(f"No potential basis files found in '{folder_path}'.")
         return None
 
-    print(f"Found {len(potential_files)} potential basis files in '{folder_path}'.")
-
     # This dictionary will store the basis data for each element,
     # with atomic numbers (as strings) as keys.
     combined_elements_data = {}

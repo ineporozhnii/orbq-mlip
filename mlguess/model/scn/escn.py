@@ -30,6 +30,9 @@ from mlguess.model.scn.smearing import (
 )
 
 from e3nn import o3
+from e3nn.nn import BatchNorm
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
 
 class eSCN(nn.Module):
     """Equivariant Spherical Channel Network
@@ -167,21 +170,20 @@ class eSCN(nn.Module):
             
         self.max_n_orbitals_per_L = max_n_orbitals_per_L
         # assumes len(lmax_list) == 1
-        irreps_in = o3.Irreps([(self.sphere_channels_all, (l, 1 if l % 2 == 0 else -1)) 
-                               for l in range(self.lmax_list[0] + 1)])
-        # even parity for coeffs
-        irreps_out = o3.Irreps([(int(x), (l, 1)) 
-                                for l, x in enumerate(self.max_n_orbitals_per_L) if x > 0])
-        self.orbit_readout = o3.FullyConnectedTensorProduct(irreps_in, irreps_in, irreps_out)
         self.expo_trainable = expo_trainable
-        if self.expo_trainable:
-            # zero-init linear layer for expo scaling
-            irreps_out = o3.Irreps([(int(hidden_channels), (0, 1))])
-            self.expo_scaling_readout = o3.FullyConnectedTensorProduct(irreps_in, irreps_in, irreps_out)
-            self.expo_scaling_linear = nn.Linear(hidden_channels, max_n_Ls)
-            nn.init.zeros_(self.expo_scaling_linear.weight)
-            nn.init.zeros_(self.expo_scaling_linear.bias)
         
+        if max(self.lmax_list) == 1:
+            self.coeff_idx = torch.tensor([0, 1, 1*self.sphere_channels, 2*self.sphere_channels, 3*self.sphere_channels]).long()
+            self.change_of_basis = torch.tensor([0, 3, 1, 2]).detach()
+            
+        elif max(self.lmax_list) == 2:
+            self.coeff_idx = torch.tensor([0, 1, 1*self.sphere_channels, 2*self.sphere_channels, 3*self.sphere_channels,
+                                                 4*self.sphere_channels, 5*self.sphere_channels, 6*self.sphere_channels,
+                                                 7*self.sphere_channels, 8*self.sphere_channels]).long()
+            self.change_of_basis = torch.tensor([0, 3, 1, 2, 4, 5, 6, 7, 8]).detach()
+        else:
+            raise NotImplementedError
+ 
         
     def forward(self, data):
         device = data.coords.device
@@ -271,98 +273,207 @@ class eSCN(nn.Module):
                     self.SO3_edge_rot,
                     mappingReduced,
                 )
-
+            
+            #torch.save(x.embedding, f"embedding_layer_{i}.pt")
+            
         ###############################################################
         # Predicts orbitals
         ###############################################################
         # N x "Cx0e + Cx1o + Cx2e + Cx3o + ..."
-        x_pt = x.embedding.flatten(1,2)
-        coeffs = self.orbit_readout(x_pt, x_pt)
         
-        if self.expo_trainable:
-            expo_scaling = self.expo_scaling_linear(self.expo_scaling_readout(x_pt, x_pt))
-        else:
-            expo_scaling = None
+        # x_emb_native = x.embedding
 
+        # e3nn_input_parts = []
+        # current_lm_idx = 0
+        # L_max = max(self.lmax_list)
+        # for l_val in range(L_max + 1):
+        #     num_m_components = (2 * l_val) + 1
+        #     # Select the slice of x_emb_native for this l_val
+        #     # These are (N_atoms, num_m_components, S) if SO3_Embedding groups m's for an l consecutively
+        #     # It's more likely: x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
+        #     # This assumes that the (L_max+1)**2 dimension is ordered like:
+        #     # all m for L=0, then all m for L=1, etc.
+
+        #     l_block_native = x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
+        #     #print(l_block_native.shape)
+        #     # l_block_native shape: (N_atoms, num_m_components_for_this_l, S_channels)
+
+        #     # We need to permute to (N_atoms, S_channels, num_m_components_for_this_l)
+        #     # so that m varies fastest for each channel.
+        #     l_block_e3nn_ordered = l_block_native.permute(0, 2, 1).contiguous()
+        #     # Now shape: (N_atoms, S_channels, num_m_components_for_this_l)
+
+        #     e3nn_input_parts.append(l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1))
+        #     current_lm_idx += num_m_components
+
+        # x_pt_for_e3nn = torch.cat(e3nn_input_parts, dim=1)
+
+        
+        x_emb = x.embedding[:, self.change_of_basis, :]
+        coeffs = x_emb.flatten(1,2)[:, self.coeff_idx]
+
+        expo_scaling = None
         return coeffs, expo_scaling
+    
+    
+        # Initialize the edge rotation matrics
+    # def _init_edge_rot_mat(self, coords, edge_index, edge_distance_vec):
+    #     edge_vec_0 = edge_distance_vec
+    #     edge_vec_0_distance = torch.sqrt(torch.sum(edge_vec_0**2, dim=1))
 
-    # Initialize the edge rotation matrics
-    def _init_edge_rot_mat(self, coords, edge_index, edge_distance_vec):
-        edge_vec_0 = edge_distance_vec
-        edge_vec_0_distance = torch.sqrt(torch.sum(edge_vec_0**2, dim=1))
+    #     # Make sure the atoms are far enough apart
+    #     if torch.min(edge_vec_0_distance) < 0.0001:
+    #         logging.error(
+    #             "Error edge_vec_0_distance: {}".format(
+    #                 torch.min(edge_vec_0_distance)
+    #             )
+    #         )
+    #         (minval, minidx) = torch.min(edge_vec_0_distance, 0)
+    #         logging.error(
+    #             "Error edge_vec_0_distance: {} {} {} {} {}".format(
+    #                 minidx,
+    #                 edge_index[0, minidx],
+    #                 edge_index[1, minidx],
+    #                 coords[edge_index[0, minidx]],
+    #                 coords[edge_index[1, minidx]],
+    #             )
+    #         )
 
-        # Make sure the atoms are far enough apart
-        if torch.min(edge_vec_0_distance) < 0.0001:
-            logging.error(
-                "Error edge_vec_0_distance: {}".format(
-                    torch.min(edge_vec_0_distance)
-                )
-            )
-            (minval, minidx) = torch.min(edge_vec_0_distance, 0)
-            logging.error(
-                "Error edge_vec_0_distance: {} {} {} {} {}".format(
-                    minidx,
-                    edge_index[0, minidx],
-                    edge_index[1, minidx],
-                    coords[edge_index[0, minidx]],
-                    coords[edge_index[1, minidx]],
-                )
-            )
+    #     norm_x = edge_vec_0 / (edge_vec_0_distance.view(-1, 1))
 
-        norm_x = edge_vec_0 / (edge_vec_0_distance.view(-1, 1))
+    #     edge_vec_2 = torch.rand_like(edge_vec_0) - 0.5
+    #     edge_vec_2 = edge_vec_2 / (
+    #         torch.sqrt(torch.sum(edge_vec_2**2, dim=1)).view(-1, 1)
+    #     )
+    #     # Create two rotated copys of the random vectors in case the random vector is aligned with norm_x
+    #     # With two 90 degree rotated vectors, at least one should not be aligned with norm_x
+    #     edge_vec_2b = edge_vec_2.clone()
+    #     edge_vec_2b[:, 0] = -edge_vec_2[:, 1]
+    #     edge_vec_2b[:, 1] = edge_vec_2[:, 0]
+    #     edge_vec_2c = edge_vec_2.clone()
+    #     edge_vec_2c[:, 1] = -edge_vec_2[:, 2]
+    #     edge_vec_2c[:, 2] = edge_vec_2[:, 1]
+    #     vec_dot_b = torch.abs(torch.sum(edge_vec_2b * norm_x, dim=1)).view(
+    #         -1, 1
+    #     )
+    #     vec_dot_c = torch.abs(torch.sum(edge_vec_2c * norm_x, dim=1)).view(
+    #         -1, 1
+    #     )
 
-        edge_vec_2 = torch.rand_like(edge_vec_0) - 0.5
-        edge_vec_2 = edge_vec_2 / (
-            torch.sqrt(torch.sum(edge_vec_2**2, dim=1)).view(-1, 1)
+    #     vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1)).view(-1, 1)
+    #     edge_vec_2 = torch.where(
+    #         torch.gt(vec_dot, vec_dot_b), edge_vec_2b, edge_vec_2
+    #     )
+    #     vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1)).view(-1, 1)
+    #     edge_vec_2 = torch.where(
+    #         torch.gt(vec_dot, vec_dot_c), edge_vec_2c, edge_vec_2
+    #     )
+
+    #     vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1))
+    #     # Check the vectors aren't aligned
+    #     assert torch.max(vec_dot) < 0.99
+
+    #     norm_z = torch.cross(norm_x, edge_vec_2, dim=1)
+    #     norm_z = norm_z / (
+    #         torch.sqrt(torch.sum(norm_z**2, dim=1, keepdim=True))
+    #     )
+    #     norm_z = norm_z / (
+    #         torch.sqrt(torch.sum(norm_z**2, dim=1)).view(-1, 1)
+    #     )
+    #     norm_y = torch.cross(norm_x, norm_z, dim=1)
+    #     norm_y = norm_y / (
+    #         torch.sqrt(torch.sum(norm_y**2, dim=1, keepdim=True))
+    #     )
+
+    #     # Construct the 3D rotation matrix
+    #     norm_x = norm_x.view(-1, 3, 1)
+    #     norm_y = -norm_y.view(-1, 3, 1)
+    #     norm_z = norm_z.view(-1, 3, 1)
+
+    #     edge_rot_mat_inv = torch.cat([norm_z, norm_x, norm_y], dim=2)
+    #     edge_rot_mat = torch.transpose(edge_rot_mat_inv, 1, 2)
+        
+    #     P = torch.tensor([[0.0, 1.0, 0.0],
+    #                       [0.0, 0.0, 1.0],
+    #                       [1.0, 0.0, 0.0]], device=edge_rot_mat.device, dtype=edge_rot_mat.dtype)
+        
+    #     edge_rot_mat = P @ edge_rot_mat @ P.T
+
+    #     return edge_rot_mat.detach()
+    
+
+    # def plot_axes(self, axis_x, axis_y, axis_z, id="0"):
+    #         fig = plt.figure()
+    #         ax = fig.add_subplot(111, projection='3d')
+
+    #         # Plot origin
+    #         ax.scatter(0, 0, 0, color='black', label='Origin')
+
+    #         # Plot axis vectors
+            
+    #         ax.quiver(0, 0, 0, 1, 0, 0, color='k')
+    #         ax.quiver(0, 0, 0, 0, 1, 0, color='k')
+    #         ax.quiver(0, 0, 0, 0, 0, 1, color='k')
+            
+    #         ax.quiver(0, 0, 0, axis_x[0], axis_x[1], axis_x[2], color='red', label='X-axis')
+    #         ax.quiver(0, 0, 0, axis_y[0], axis_y[1], axis_y[2], color='green', label='Y-axis')
+    #         ax.quiver(0, 0, 0, axis_z[0], axis_z[1], axis_z[2], color='blue', label='Z-axis')
+
+    #         # Set labels
+    #         ax.set_xlabel('X')
+    #         ax.set_ylabel('Y')
+    #         ax.set_zlabel('Z')
+
+    #         ax.legend()
+    #         plt.savefig(f'axes_plot_original_{id}.png')
+
+    # # Initialize the edge rotation matrics
+    
+    def _init_edge_rot_mat(self, data, edge_index, edge_distance_vec):
+        device = edge_distance_vec.device
+        dtype = edge_distance_vec.dtype
+        norm_eps = 1e-8  # Small epsilon for normalization stability
+
+        # edge_distance_vec are the raw edge vectors r_j - r_i
+        edge_lengths = torch.norm(edge_distance_vec, p=2, dim=1, keepdim=True)
+        
+        # Normalized edge vector, this will be our local Z-axis
+        axis_z = edge_distance_vec / (edge_lengths + norm_eps)
+        # Create a consistent X_local, Y_local
+        # Pick a reference vector not collinear with axis_z.
+        # Common choice: world Z-axis [0,0,1] or world X-axis [1,0,0].
+        # If edge is along world Z, pick world X, else pick world Z.
+        world_z_torch = torch.tensor([0.0, 0.0, 1.0], device=device, dtype=dtype)
+        world_x_torch = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype)
+        P = torch.tensor([[0.0, 1.0, 0.0], 
+                          [0.0, 0.0, 1.0], 
+                          [1.0, 0.0, 0.0]], device=device, dtype=dtype, requires_grad=False)
+        
+        # Expand world vectors to match batch size of axis_z
+        world_z_vec = world_z_torch.expand_as(axis_z)
+        world_x_vec = world_x_torch.expand_as(axis_z)
+
+        dot_with_world_z = torch.sum(axis_z * world_z_vec, dim=1, keepdim=True)
+
+        # If axis_z is (anti)parallel to world_z, use world_x as reference
+        # otherwise, use world_z as reference to cross with axis_z to get axis_y
+        # (This order makes axis_y = normalize(world_ref x axis_z))
+        ref_vec_for_y = torch.where(
+            torch.abs(dot_with_world_z) >= (1.0 - norm_eps), # If aligned with world_z
+            world_x_vec, # Use world_x
+            world_z_vec  # Else use world_z
         )
-        # Create two rotated copys of the random vectors in case the random vector is aligned with norm_x
-        # With two 90 degree rotated vectors, at least one should not be aligned with norm_x
-        edge_vec_2b = edge_vec_2.clone()
-        edge_vec_2b[:, 0] = -edge_vec_2[:, 1]
-        edge_vec_2b[:, 1] = edge_vec_2[:, 0]
-        edge_vec_2c = edge_vec_2.clone()
-        edge_vec_2c[:, 1] = -edge_vec_2[:, 2]
-        edge_vec_2c[:, 2] = edge_vec_2[:, 1]
-        vec_dot_b = torch.abs(torch.sum(edge_vec_2b * norm_x, dim=1)).view(
-            -1, 1
-        )
-        vec_dot_c = torch.abs(torch.sum(edge_vec_2c * norm_x, dim=1)).view(
-            -1, 1
-        )
+        
+        axis_y = -torch.cross(ref_vec_for_y, axis_z, dim=1) # Swapped order to get Y before X
+        axis_y = axis_y / (torch.norm(axis_y, p=2, dim=1, keepdim=True) + norm_eps)
 
-        vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1)).view(-1, 1)
-        edge_vec_2 = torch.where(
-            torch.gt(vec_dot, vec_dot_b), edge_vec_2b, edge_vec_2
-        )
-        vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1)).view(-1, 1)
-        edge_vec_2 = torch.where(
-            torch.gt(vec_dot, vec_dot_c), edge_vec_2c, edge_vec_2
-        )
+        axis_x = torch.cross(axis_y, axis_z, dim=1) # axis_y x axis_z = axis_x
 
-        vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1))
-        # Check the vectors aren't aligned
-        assert torch.max(vec_dot) < 0.99
-
-        norm_z = torch.cross(norm_x, edge_vec_2, dim=1)
-        norm_z = norm_z / (
-            torch.sqrt(torch.sum(norm_z**2, dim=1, keepdim=True))
-        )
-        norm_z = norm_z / (
-            torch.sqrt(torch.sum(norm_z**2, dim=1)).view(-1, 1)
-        )
-        norm_y = torch.cross(norm_x, norm_z, dim=1)
-        norm_y = norm_y / (
-            torch.sqrt(torch.sum(norm_y**2, dim=1, keepdim=True))
-        )
-
-        # Construct the 3D rotation matrix
-        norm_x = norm_x.view(-1, 3, 1)
-        norm_y = -norm_y.view(-1, 3, 1)
-        norm_z = norm_z.view(-1, 3, 1)
-
-        edge_rot_mat_inv = torch.cat([norm_z, norm_x, norm_y], dim=2)
-        edge_rot_mat = torch.transpose(edge_rot_mat_inv, 1, 2)
-
+        # Columns of edge_rot_mat_inv are axis_x, axis_y, axis_z
+        edge_rot_mat_inv = torch.stack([axis_x, axis_y, axis_z], dim=2)
+        edge_rot_mat = torch.transpose(edge_rot_mat_inv, 1, 2).contiguous()
+        edge_rot_mat = P @ edge_rot_mat @ P.T
+        
         return edge_rot_mat.detach()
 
     @property
@@ -752,11 +863,11 @@ class SO2Conv(torch.nn.Module):
         self.fc1_dist = nn.Linear(edge_channels, 2 * self.hidden_channels)
 
         # Real weights of SO(2) convolution
-        self.fc1_r = nn.Linear(num_channels, self.hidden_channels, bias=False)
+        self.fc1_r = nn.Linear(num_channels, self.hidden_channels, bias=True) # True 
         self.fc2_r = nn.Linear(self.hidden_channels, num_channels, bias=False)
 
         # Imaginary weights of SO(2) convolution
-        self.fc1_i = nn.Linear(num_channels, self.hidden_channels, bias=False)
+        self.fc1_i = nn.Linear(num_channels, self.hidden_channels, bias=True) # True 
         self.fc2_i = nn.Linear(self.hidden_channels, num_channels, bias=False)
 
     def forward(self, x_m, x_edge) -> torch.Tensor:
@@ -837,44 +948,3 @@ class EdgeBlock(torch.nn.Module):
         x_edge = self.act(self.fc1_edge_attr(x_edge))
 
         return x_edge
-
-
-class ReadoutBlock(torch.nn.Module):
-    """
-    Energy Block: Output block computing the energy
-
-    Args:
-        num_channels (int):         Number of channels
-        num_sphere_samples (int):   Number of samples used to approximate the integral on the sphere
-        act (function):             Non-linear activation function
-    """
-
-    def __init__(
-        self,
-        num_channels: int,
-        num_sphere_samples: int,
-        act,
-        outdim: int,
-        init_0: bool = False,
-    ) -> None:
-        super(ReadoutBlock, self).__init__()
-        self.num_channels = num_channels
-        self.num_sphere_samples = num_sphere_samples
-        self.outdim = outdim
-        self.act = act
-
-        self.fc1 = nn.Linear(self.num_channels, self.num_channels)
-        self.fc2 = nn.Linear(self.num_channels, self.num_channels)
-        self.fc3 = nn.Linear(self.num_channels, outdim, bias=False)
-        if init_0:
-            self.fc.weight.data.zero_()
-
-    def forward(self, x_pt) -> torch.Tensor:
-        # x_pt are the values of the channels sampled at different points on the sphere
-        x_pt = self.act(self.fc1(x_pt))
-        x_pt = self.act(self.fc2(x_pt))
-        x_pt = self.fc3(x_pt)
-        x_pt = x_pt.view(-1, self.num_sphere_samples, self.outdim)
-        node_energy = torch.sum(x_pt, dim=1) / self.num_sphere_samples
-
-        return node_energy

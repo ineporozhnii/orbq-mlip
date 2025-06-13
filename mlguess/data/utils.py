@@ -9,21 +9,8 @@ import dxtb
 from dxtb_experiments.utils import dxtb_to_escn_orbitals
 import ase
 from ase.calculators.vasp import VaspChargeDensity
-from pyrho.charge_density import ChargeDensity
 
 from mlguess.common.utils import cell_heights
-
-def read_pmg_pkl(fpath):
-    with open(fpath, "rb") as f:
-        chgcar = pickle.load(f)
-    chgcar = ChargeDensity.from_pmg(chgcar)
-    struct = chgcar.structure
-    atomic_numbers = torch.tensor([site.specie.Z for site in struct], dtype=torch.long)
-    cart_coords = torch.tensor(struct.cart_coords).float()
-    cell = torch.tensor(struct.lattice.matrix).float()
-    chg_density = torch.tensor(chgcar.normalized_data["total"]).float()
-    return atomic_numbers, cart_coords, cell, chg_density, None, struct
-
 
 def read_vasp(filecontent, read_spin=False):
     # Write to tmp file and read using ASE
