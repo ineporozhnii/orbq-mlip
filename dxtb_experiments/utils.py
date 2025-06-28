@@ -79,7 +79,7 @@ def calculate_dxtb(
     calc_config = {
         "dtype": torch.double,
         "device": torch.device("cpu"),
-        "opts": {"verbosity": 0}
+        "opts": {"verbosity": 0, "maxiter": 1000, 'scp_mode': 0} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
     }
     
     # Initialize GFN1 calculator
@@ -94,6 +94,7 @@ def calculate_dxtb(
     n_scf_iter = np.array([result.iter])
     calc_time = np.array([calc_time])
     final_charges = result.charges.mono.detach().numpy()
+    final_potential = result.potential.mono.cpu().detach().numpy()
     final_emo = result.emo.detach().numpy()
     final_energy = result.total.detach().numpy()
     
@@ -103,15 +104,18 @@ def calculate_dxtb(
     ).detach().numpy()
     
     # Save all results to a compressed NumPy file
-    # np.savez(
-    #     f"{save_dir}/{molecule_id}_dxtb_result",
-    #     init_eeq_charges=init_eeq_charges,
-    #     final_charges=final_charges,
-    #     final_emo=final_emo,
-    #     final_energy=final_energy,
-    #     n_scf_iter=n_scf_iter,
-    #     calc_time=calc_time
-    # )
+    np.savez(
+        f"{save_dir}/{molecule_id}_dxtb_result",
+        numbers=numbers.detach().cpu().numpy(),
+        coord=positions.detach().cpu().numpy(),
+        init_eeq_charges=init_eeq_charges,
+        final_charges=final_charges,
+        final_potential=final_potential,
+        final_emo=final_emo,
+        final_energy=final_energy,
+        n_scf_iter=n_scf_iter,
+        calc_time=calc_time
+    )
     
     return final_energy
 

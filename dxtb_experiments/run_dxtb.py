@@ -39,7 +39,7 @@ def main():
     # If LMDB file is provided              
     if filename.endswith(".lmdb"):
         dataset = work_lmdb(lmbd_path, filename)
-        for i in tqdm(range(0, N_MAX)):
+        for i in tqdm(len(dataset)):
             molecule = dataset[i]
             molecule_id = molecule.cid
             numbers = molecule["atomic_numbers"]
