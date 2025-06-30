@@ -146,7 +146,7 @@ class eSCN(nn.Module):
         self.SO3_grid = nn.ModuleList()
         for lval in range(max(self.lmax_list) + 1):
             SO3_m_grid = nn.ModuleList()
-            for m in range(max(self.lmax_list) + 1):
+            for m in range(max(self.mmax_list) + 1):
                 SO3_m_grid.append(SO3_Grid(lval, m))
 
             self.SO3_grid.append(SO3_m_grid)
