@@ -72,8 +72,8 @@ def calculate_dxtb(
         float: Final calculated energy
     """
     # Clone and convert input tensors to appropriate types
-    numbers = numbers.clone().detach().to(torch.int64)
-    positions = positions.clone().detach().to(torch.double).requires_grad_(True)
+    numbers = torch.tensor(numbers).detach().to(torch.int64)
+    positions = torch.tensor(positions).detach().to(torch.double).requires_grad_(True)
 
     # Set up calculator configuration
     calc_config = {
