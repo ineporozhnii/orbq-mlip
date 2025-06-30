@@ -1,6 +1,6 @@
 _target_: mlguess.model.module.ChgLightningModule
 
-criterion: mse
+criterion: mae
 vnode_elem: 8
 pbc: false
 dft_basis_set: 'gfn1'
