@@ -2,7 +2,7 @@ import time
 import lmdb
 import pyscf
 from tqdm import tqdm
-from pyscf import lib
+from pyscf import lib, scf
 import numpy as np
 import json 
 import os
@@ -32,20 +32,22 @@ def main():
     lib.num_threads(24)
     print("N THREADS:", lib.num_threads())
     
-    filename = "/home/ihor/projects/MLGuessQC/datasets/tmQM_dft_acceleration_estimate_npz"
+    filename = None#"/home/ihor/projects/MLGuessQC/datasets/tmQM_dft_acceleration_estimate_npz"
     output_dir = "pyscf_experiments/results_debug"
     
     if filename == None:
         mol = pyscf.gto.Mole()
-        mol.atom = pyscf.gto.mole.fromfile('/home/ihor/projects/MLGuessQC/datasets/FEQCOT.xyz')
-        mol.spin = 0
-        mol.basis = 'def2svp'
+        mol.atom = pyscf.gto.mole.fromfile('/home/ihor/projects/MLGuessQC/datasets/JAXREF.xyz')
+        mol.spin = 1
+        mol.basis = 'LANL2DZ'
         mol.verbose = 4
         # mol.build(
         #     atom = '''C 0 0 0; O 0 1 0''',
         #     basis = 'sto-3g')
         mf = mol.KS()
         mf.max_cycle = 200
+        mf.init_guess = 'vsap'
+        mf = scf.addons.smearing_(mf, sigma=0.01, method='fermi')
         mf.xc = 'R2SCAN'
         start = time.time()
         mf.kernel()
@@ -97,10 +99,12 @@ def main():
                 mol = pyscf.gto.Mole()
                 mol.atom = pyscf.gto.mole.fromstring(mol_string, format='raw')
                 
-                mol.basis = 'lanl2dz'
+                mol.basis = 'LANL2DZ'
                 mol.verbose = 4
                 mol.spin = 0
                 mf = mol.KS()
+                mf.init_guess = 'vsap'
+                mf = scf.addons.smearing_(mf, sigma=0.01, method='fermi')
                 mf.xc = 'R2SCAN'
                 mf.max_cycle = 300
                 
@@ -108,14 +112,17 @@ def main():
                 mf.kernel()
                 end = time.time()
                 calc_time = end - start
+                print(f"Total calculation time: {calc_time/60:.2f} minutes")
                     
                 n_scf_iter = np.array([mf.cycles])
                 init_dm = mf.dm_init
                 final_dm = mf.dm
-                final_mo_energy = mf.mo_energy
-                final_mo_coeff = mf.mo_coeff
                 final_energy = np.array([mf.e_tot])
                 calc_time = np.array([calc_time])
+                h1e = mf.get_hcore()
+                s1e = mf.get_ovlp()
+                fock = mf.get_fock()
+                veff = mf.get_veff()
                 
                 save_path = os.path.join(output_dir, npz_file.replace(".npz", "_pyscf_result.npz"))
                 np.savez(save_path,
@@ -123,8 +130,10 @@ def main():
                     positions=positions,
                     init_dm=init_dm,
                     final_dm=final_dm, 
-                    final_mo_energy=final_mo_energy, 
-                    final_mo_coeff=final_mo_coeff,
+                    h1e=h1e,
+                    s1e=s1e,
+                    final_fock=fock,
+                    final_veff=veff,
                     final_energy=final_energy,
                     n_scf_iter=n_scf_iter,
                     calc_time=calc_time,
