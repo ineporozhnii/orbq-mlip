@@ -2,16 +2,16 @@ _target_: mlguess.data.datamodule.ProbeDataModule
 
 dataset:
   _target_: mlguess.data.dataset.LmdbDataset
-  path: /home/ihor/projects/MLGuessQC/datasets/tmQMneutral_potential
+  path: /home/ihor/projects/MLGuessQC/datasets/tmQMneutral_FPCmatch_charges
 
-split_file: /home/ihor/projects/MLGuessQC/datasets/tmQMneutral_potential/datasplits_debug.json
+split_file: /home/ihor/projects/MLGuessQC/datasets/tmQMneutral_FPCmatch_charges/datasplits.json
 
 num_workers: 
   train: 4
   val: 4
   test: 4
 batch_size: 
-  train: 3
+  train: 2
   val: 3
   test: 3
 n_probe:
