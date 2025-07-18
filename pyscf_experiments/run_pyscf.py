@@ -32,18 +32,28 @@ def main():
     lib.num_threads(24)
     print("N THREADS:", lib.num_threads())
     
-    filename = "/home/ihor/projects/MLGuessQC/datasets/OMol25_dft_acceleration_estimate_npz"
+    filename = "/home/ihor/projects/MLGuessQC/datasets/tmQM_dft_acceleration_estimate_npz"
     output_dir = "pyscf_experiments/results_debug"
     
     if filename == None:
         mol = pyscf.gto.Mole()
-        mol.build(
-            atom = '''C 0 0 0; O 0 1 0''',
-            basis = 'sto-3g')
+        mol.atom = pyscf.gto.mole.fromfile('/home/ihor/projects/MLGuessQC/datasets/FEQCOT.xyz')
+        mol.spin = 0
+        mol.basis = 'def2svp'
+        mol.verbose = 4
+        # mol.build(
+        #     atom = '''C 0 0 0; O 0 1 0''',
+        #     basis = 'sto-3g')
         mf = mol.KS()
-        mf.xc = 'b3lyp'
+        mf.max_cycle = 200
+        mf.xc = 'R2SCAN'
+        start = time.time()
         mf.kernel()
+        end = time.time()
+        calc_time = end - start
         print("Energy:", mf.e_tot)
+        print("Total calculation time:", calc_time)
+        veff = mf.get_veff()
         dm = mf.dm
         import matplotlib.pyplot as plt
 
@@ -54,77 +64,74 @@ def main():
         plt.title('Density Matrix')
         plt.xlabel('Index')
         plt.ylabel('Index')
-        plt.savefig("pyscf_experiments/temp/dm_CO.png")
+        plt.savefig("pyscf_experiments/temp/dm_FEQCOT_def2svp.png")
         plt.show()
         
         fig = plt.figure(figsize=(6, 6))
-        plt.imshow(mf.mo_coeff, cmap='viridis', interpolation='nearest')
+        plt.imshow(veff, cmap='viridis', interpolation='nearest')
         plt.colorbar(label='MO Coeff Matrix Values')
         plt.title('MO Coeff Matrix')
         plt.xlabel('Index')
         plt.ylabel('Index')
-        plt.savefig("pyscf_experiments/temp/mo_coeff_CO.png")
+        plt.savefig("pyscf_experiments/temp/veff_FEQCOT_def2svp.png")
         plt.show()
         
-        dm_scf = compute_dm(mf.mo_occ, mf.mo_coeff)
-        dm_guess = compute_dm(np.array([2., 2., 2., 2., 2., 2., 2., 0., 0., 0.]), mf.mo_coeff)
-        assert np.allclose(dm_scf, dm_guess), "Density matrices do not match!"
+        # dm_scf = compute_dm(mf.mo_occ, mf.mo_coeff)
+        # dm_guess = compute_dm(np.array([2., 2., 2., 2., 2., 2., 2., 0., 0., 0.]), mf.mo_coeff)
+        # assert np.allclose(dm_scf, dm_guess), "Density matrices do not match!"
         
     elif os.path.isdir(filename) and any(".npz" in f for f in os.listdir(filename)):
         npz_files = [f for f in os.listdir(filename) if ".npz" in f]
         for npz_file in npz_files:
-            file_path = os.path.join(filename, npz_file)
-            data = np.load(file_path)
-            
-            numbers = data["atomic_numbers"]
-            positions = data["positions"]
-            
-            atom_symbols = [pyscf.gto.mole._symbol(int(num)) for num in numbers]
-            atom_positions = ["{:.8f} {:.8f} {:.8f}".format(*pos) for pos in positions]
-            atom_strings = [f"{symbol} {pos}" for symbol, pos in zip(atom_symbols, atom_positions)]
-            mol_string = "\n".join(atom_strings)
-            mol = pyscf.gto.Mole()
-            mol.atom = pyscf.gto.mole.fromstring(mol_string, format='raw')
-            
-            mol.basis = 'def2tzvpd'
-            mol.verbose = 5
-            mol.spin = 0
-            mf = mol.KS()
-            mf.xc = 'wb97m_v'
-            mf.max_cycle = 300
-            
-            start = time.time()
-            mf.kernel()
-            end = time.time()
-            calc_time = end - start
-                 
-            n_scf_iter = np.array([mf.cycles])
-            print()
-            init_dm = mf.dm_init
-            final_dm = mf.dm
-            final_mo_energy = mf.mo_energy
-            final_mo_coeff = mf.mo_coeff
-            final_energy = np.array([mf.e_tot])
-            calc_time = np.array([calc_time])
-            
-            save_path = os.path.join(output_dir, npz_file.replace(".npz", "_pyscf_result.npz"))
-            np.savez(save_path,
-                atomic_numbers=numbers,
-                positions=positions,
-                init_dm=init_dm,
-                final_dm=final_dm, 
-                final_mo_energy=final_mo_energy, 
-                final_mo_coeff=final_mo_coeff,
-                final_energy=final_energy,
-                n_scf_iter=n_scf_iter,
-                calc_time=calc_time,
-                charge=data["charge"],
-                spin=data["spin"],
-                OMol25_n_scf_steps=data["OMol25_n_scf_steps"],
-                OMol25_data_id=data["OMol25_data_id"],
-                OMol25_source=data["OMol25_source"]
- 
-            )
+            try:
+                file_path = os.path.join(filename, npz_file)
+                data = np.load(file_path)
+                
+                numbers = data["atomic_numbers"]
+                positions = data["positions"]
+                
+                atom_symbols = [pyscf.gto.mole._symbol(int(num)) for num in numbers]
+                atom_positions = ["{:.8f} {:.8f} {:.8f}".format(*pos) for pos in positions]
+                atom_strings = [f"{symbol} {pos}" for symbol, pos in zip(atom_symbols, atom_positions)]
+                mol_string = "\n".join(atom_strings)
+                mol = pyscf.gto.Mole()
+                mol.atom = pyscf.gto.mole.fromstring(mol_string, format='raw')
+                
+                mol.basis = 'lanl2dz'
+                mol.verbose = 4
+                mol.spin = 0
+                mf = mol.KS()
+                mf.xc = 'R2SCAN'
+                mf.max_cycle = 300
+                
+                start = time.time()
+                mf.kernel()
+                end = time.time()
+                calc_time = end - start
+                    
+                n_scf_iter = np.array([mf.cycles])
+                init_dm = mf.dm_init
+                final_dm = mf.dm
+                final_mo_energy = mf.mo_energy
+                final_mo_coeff = mf.mo_coeff
+                final_energy = np.array([mf.e_tot])
+                calc_time = np.array([calc_time])
+                
+                save_path = os.path.join(output_dir, npz_file.replace(".npz", "_pyscf_result.npz"))
+                np.savez(save_path,
+                    atomic_numbers=numbers,
+                    positions=positions,
+                    init_dm=init_dm,
+                    final_dm=final_dm, 
+                    final_mo_energy=final_mo_energy, 
+                    final_mo_coeff=final_mo_coeff,
+                    final_energy=final_energy,
+                    n_scf_iter=n_scf_iter,
+                    calc_time=calc_time,
+                )
+            except Exception as e:
+                print(f"Failed to process {npz_file}: {e}")
+                continue
  
   
     elif filename.endswith(".xyz"):
