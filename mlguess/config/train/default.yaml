@@ -13,13 +13,13 @@ trainer:
   max_steps: 10000000
   num_sanity_val_steps: 2
   gradient_clip_val: 1.0
-  val_check_interval: 1.
+  val_check_interval: 0.5
   # log_every_n_steps: 5
   deterministic: ${train.deterministic}
 
 optim:
   _target_: torch.optim.AdamW
-  lr: 1e-3
+  lr: 5e-4
   betas: [0.9, 0.999]
   eps: 1e-08
   weight_decay: 0.01
@@ -27,7 +27,7 @@ optim:
 lr_scheduler:
   _target_: mlguess.model.utils.PowerDecayScheduler
   warmup_steps: 100 # 1000
-  alpha: 0.97
+  alpha: 0.96
   beta: 4500 
 lr_schedule_freq: 1
 

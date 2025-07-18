@@ -1,6 +1,6 @@
 # metadata specialised for each experiment
 core:
-  expname: tmQMneutral_K4L2M2
+  expname: tmQMneutral_K4L2M2_charges_full
   project_name: mlguess
   storage_dir: ${core.expname}
   version: 0.0.1
