@@ -93,7 +93,7 @@ def main(
     dataset = LmdbDataset(data_path)
     with open(split_file, "r") as fp:
         splits = json.load(fp)
-    test_dataset = Subset(dataset, splits['test'])
+    test_dataset = Subset(dataset, splits[tag])
     test_loader = DataLoader(
         test_dataset, 
         batch_size=batch_size, 
@@ -118,6 +118,7 @@ def main(
             raise FileNotFoundError(f"No checkpoint found in <{ckpt_path}>.")
     
     # pylint: disable=E1120
+    print(f"Loading checkpoint from {ckpt}")
     pylogger.info(f"loaded checkpoint: {ckpt}")
     model = ChgLightningModule.load_from_checkpoint(checkpoint_path=ckpt).to('cuda')
     model.eval()
@@ -142,37 +143,42 @@ def main(
 
         curr_time = time.time()
         
-        idx = 0
-        all_nmapes = []
+        metadata_list = []
+        n_atom = []
+        atom_types = []
+        coords = []
+        predictions = []
+        ground_truth = []
         for batch in test_loader:
             batch = batch.to('cuda')
             coeffs, expo_scaling = model.predict_coeffs(batch)
-            n_pass, n_per_pass, probes_to_process = get_probe_chunks(batch.n_probe, max_n_probe)
-            all_preds = []
-            for i_pass in range(n_pass):
-                n_probe = n_per_pass[i_pass]
-                probe_idx = probes_to_process[i_pass]
-                probe_coords = batch.probe_coords[probe_idx]
-                pred = model.orbital_inference(batch, coeffs, expo_scaling, n_probe, probe_coords)
-                all_preds.append(pred)
-            all_preds = torch.cat(all_preds, dim=0)
-            nmape = get_nmape(
-                all_preds, batch.chg_labels, 
-                torch.arange(len(batch), device=all_preds.device).repeat_interleave(batch.n_probe)
-            ).cpu().numpy().tolist()
-            all_nmapes.extend(nmape)
-            
-            for item in nmape:
-                f.write(f'{item}\n')
-            f.flush()
-            prog.update(batch.num_graphs)
-            display_bar.set_description_str(f"nmape: {np.mean(all_nmapes):.4f} ± {np.std(all_nmapes):.4f}")
-            idx += batch.num_graphs
-            if idx >= max_n_graphs:
-                break
-        
+            pred = model.orbital_inference(batch, coeffs)  
+            n_atom.extend(batch["n_atom"].detach().cpu().numpy())
+            atom_types.extend(batch["atom_types"].detach().cpu().numpy())
+            coords.extend(batch["coords"].detach().cpu().numpy())
+            predictions.extend(pred.detach().cpu().numpy())
+            ground_truth.extend(batch.y.detach().cpu())
+            metadata_list.extend(batch.metadata)
+            prog.update(batch["n_atom"].shape[0])        
         elapsed_time = time.time() - curr_time
         pylogger.info(f"elapsed time: {elapsed_time:.2f} seconds.")
+        
+        n_atom = np.array(n_atom)
+        atom_types = np.array(atom_types)
+        coords = np.array(coords)
+        ground_truth = np.array(ground_truth)
+        predictions = np.array(predictions)
+        save_path = Path(data_path) / f"{tag}_out.npz"
+        np.savez(
+            save_path,
+            n_atom=n_atom,
+            atom_types=atom_types,
+            coords=coords,
+            ground_truth=ground_truth,
+            predictions=predictions,
+            metadata=metadata_list,
+        )
+        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -200,13 +206,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_n_graphs",
         type=int,
-        default=10000,
+        default=100_000,
         help="max number of data points to do inference for.",
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=4,
+        default=24,
         help="Batch size for evaluation.",
     )
     parser.add_argument(

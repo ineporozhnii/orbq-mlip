@@ -3,6 +3,7 @@ import json
 from typing import List
 from pathlib import Path
 
+import os
 import hydra
 import lightning.pytorch as pl
 import omegaconf
@@ -22,6 +23,7 @@ SLURMEnvironment.detect = lambda: False
 pylogger = logging.getLogger(__name__)
 
 torch.set_float32_matmul_precision("high")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
 def build_callbacks(cfg: ListConfig, *args: Callback) -> List[Callback]:
     """Instantiate the callbacks given their configuration.
