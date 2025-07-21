@@ -118,7 +118,7 @@ class PredictionScatterPlotCallback(Callback):
             coords = np.array(self.coords)
             ground_truth = np.array(self.ground_truth)
             predictions = np.array(self.predictions)
-            save_path = f"/home/ihor/projects/MLGuessQC/mlguess/results/tmQMneutral_FPCmatch_filtered_charges/orbital_charges_epoch_{trainer.current_epoch}.npz"
+            save_path = f"/home/ihor/projects/MLGuessQC/mlguess/results/tmQMneutral_FPCmatch_filtered_charges_overfit/orbital_charges_epoch_{trainer.current_epoch}.npz"
             np.savez(
                 save_path,
                 n_atom=n_atom,
