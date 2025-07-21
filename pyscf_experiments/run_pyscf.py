@@ -108,8 +108,14 @@ def main():
                 mf.xc = 'R2SCAN'
                 mf.max_cycle = 300
                 
+                if 'predicted_dm' in data:
+                    dm0 = data['predicted_dm']
+                    print(f"!!! Using predicted DM from {npz_file} !!!")
+                else:
+                    dm0 = None
+                
                 start = time.time()
-                mf.kernel()
+                mf.kernel(dm0=dm0)
                 end = time.time()
                 calc_time = end - start
                 print(f"Total calculation time: {calc_time/60:.2f} minutes")
