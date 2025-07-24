@@ -2,9 +2,9 @@ _target_: mlguess.data.datamodule.ProbeDataModule
 
 dataset:
   _target_: mlguess.data.dataset.LmdbDataset
-  path: /home/ihor/projects/MLGuessQC/datasets/tmQMneutral_FPCmatch_charges
+  path: /home/ihor/projects/MLGuessQC/datasets/Cl2_debug
 
-split_file: /home/ihor/projects/MLGuessQC/datasets/tmQMneutral_FPCmatch_charges/datasplits_overfit.json
+split_file: /home/ihor/projects/MLGuessQC/datasets/Cl2_debug/datasplits.json
 
 num_workers: 
   train: 4
