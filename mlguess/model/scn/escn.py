@@ -183,6 +183,11 @@ class eSCN(nn.Module):
             self.change_of_basis = torch.tensor([0, 3, 1, 2, 4, 5, 6, 7, 8]).detach()
         else:
             raise NotImplementedError
+        
+        self.lin_out = o3.Linear(
+            irreps_in="128x0e + 128x1o + 128x2e",
+            irreps_out="2x0e + 1x1o + 1x2e",
+        )
  
         
     def forward(self, data):
@@ -281,36 +286,38 @@ class eSCN(nn.Module):
         ###############################################################
         # N x "Cx0e + Cx1o + Cx2e + Cx3o + ..."
         
-        # x_emb_native = x.embedding
+        x_emb_native = x.embedding[:, self.change_of_basis, :]
 
-        # e3nn_input_parts = []
-        # current_lm_idx = 0
-        # L_max = max(self.lmax_list)
-        # for l_val in range(L_max + 1):
-        #     num_m_components = (2 * l_val) + 1
-        #     # Select the slice of x_emb_native for this l_val
-        #     # These are (N_atoms, num_m_components, S) if SO3_Embedding groups m's for an l consecutively
-        #     # It's more likely: x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
-        #     # This assumes that the (L_max+1)**2 dimension is ordered like:
-        #     # all m for L=0, then all m for L=1, etc.
+        e3nn_input_parts = []
+        current_lm_idx = 0
+        L_max = max(self.lmax_list)
+        for l_val in range(L_max + 1):
+            num_m_components = (2 * l_val) + 1
+            # Select the slice of x_emb_native for this l_val
+            # These are (N_atoms, num_m_components, S) if SO3_Embedding groups m's for an l consecutively
+            # It's more likely: x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
+            # This assumes that the (L_max+1)**2 dimension is ordered like:
+            # all m for L=0, then all m for L=1, etc.
 
-        #     l_block_native = x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
-        #     #print(l_block_native.shape)
-        #     # l_block_native shape: (N_atoms, num_m_components_for_this_l, S_channels)
+            l_block_native = x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
+            #print(l_block_native.shape)
+            # l_block_native shape: (N_atoms, num_m_components_for_this_l, S_channels)
 
-        #     # We need to permute to (N_atoms, S_channels, num_m_components_for_this_l)
-        #     # so that m varies fastest for each channel.
-        #     l_block_e3nn_ordered = l_block_native.permute(0, 2, 1).contiguous()
-        #     # Now shape: (N_atoms, S_channels, num_m_components_for_this_l)
+            # We need to permute to (N_atoms, S_channels, num_m_components_for_this_l)
+            # so that m varies fastest for each channel.
+            l_block_e3nn_ordered = l_block_native.permute(0, 2, 1).contiguous()
+            # Now shape: (N_atoms, S_channels, num_m_components_for_this_l)
 
-        #     e3nn_input_parts.append(l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1))
-        #     current_lm_idx += num_m_components
+            e3nn_input_parts.append(l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1))
+            current_lm_idx += num_m_components
 
-        # x_pt_for_e3nn = torch.cat(e3nn_input_parts, dim=1)
+        x_pt_for_e3nn = torch.cat(e3nn_input_parts, dim=1)
+        coeffs = self.lin_out(x_pt_for_e3nn)
+        #coeffs = x_pt_for_e3nn[:, torch.tensor([0, 1, self.sphere_channels, self.sphere_channels+1, self.sphere_channels+2]).long()]
 
         
-        x_emb = x.embedding[:, self.change_of_basis, :]
-        coeffs = x_emb.flatten(1,2)[:, self.coeff_idx]
+        #x_emb = x.embedding[:, self.change_of_basis, :]
+        #coeffs = x_emb.flatten(1,2)[:, self.coeff_idx]
 
         expo_scaling = None
         return coeffs, expo_scaling
