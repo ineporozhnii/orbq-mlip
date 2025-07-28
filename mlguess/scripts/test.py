@@ -8,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from tqdm.auto import tqdm
 
+import os
 import omegaconf
 import torch
 from lightning.pytorch import seed_everything
@@ -22,6 +23,7 @@ from mlguess.model.module import ChgLightningModule
 pylogger = logging.getLogger(__name__)
 
 torch.set_float32_matmul_precision("high")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
 def get_data_probe_chunk(input_data, indices):
     data = deepcopy(input_data)

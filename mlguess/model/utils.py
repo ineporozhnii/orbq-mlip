@@ -65,7 +65,7 @@ class WarmupMilestoneScheduler(optim.lr_scheduler.LambdaLR):
     
 
 class PredictionScatterPlotCallback(Callback):
-    def __init__(self, log_interval: int = 1, max_charges_plot: int = 200_000):
+    def __init__(self, log_interval: int = 1, save_dir: str = "",  max_charges_plot: int = 200_000):
         """
         Callback to log scatter plot of predictions vs ground truth to WandB.
 
@@ -73,6 +73,7 @@ class PredictionScatterPlotCallback(Callback):
             log_interval: Interval (in epochs) at which to log the scatter plot.
         """
         self.log_interval = log_interval
+        self.save_dir = save_dir
         self.max_charges_plot = max_charges_plot
         self.n_atom = []
         self.atom_types = []
@@ -118,15 +119,15 @@ class PredictionScatterPlotCallback(Callback):
             coords = np.array(self.coords)
             ground_truth = np.array(self.ground_truth)
             predictions = np.array(self.predictions)
-            # save_path = f"/home/ihor/projects/MLGuessQC/mlguess/results/tmQMneutral_FPCmatch_filtered_charges_overfit/orbital_charges_epoch_{trainer.current_epoch}.npz"
-            # np.savez(
-            #     save_path,
-            #     n_atom=n_atom,
-            #     atom_types=atom_types,
-            #     coords=coords,
-            #     ground_truth=ground_truth,
-            #     predictions=predictions
-            # )
+            save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.npz"
+            np.savez(
+                save_path,
+                n_atom=n_atom,
+                atom_types=atom_types,
+                coords=coords,
+                ground_truth=ground_truth,
+                predictions=predictions
+            )
 
         # Clear stored predictions and ground truth for the next epoch
         self.n_atom = []
