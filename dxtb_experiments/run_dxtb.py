@@ -3,14 +3,26 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 from utils import load_xyz, work_lmdb, calculate_dxtb 
+import sys
 
 def main():
+    scp_mode = int(sys.argv[1])
+    dir_path = str(sys.argv[2])
+    save_dir = str(sys.argv[3])
+    init_guess_file = str(sys.argv[4])
+    
+    if init_guess_file:
+        assert os.path.exists(init_guess_file), f"!!! Init guess file {init_guess_file} does not exist !!!"
+        init_guess = np.load(init_guess_file)
+        print("")
+        print(f"Using guess file: {init_guess_file}")
+        print("")
+    else:
+        init_charges = None
     
     ftype = "npz"
     filename = None
-    dir_path = None
     lmbd_path = None
-    save_dir = None
     #filename = "all_molecules.lmdb"
     #filename = "tmqm_delta_e_neutral_ref_cor_70_test.lmdb"  # Replace with your file path
     #filename = "/home/ihor/projects/MLGuessQC/data/JAXREF.xyz"
@@ -33,16 +45,21 @@ def main():
             npz_files = list(Path(dir_path).glob("*.npz"))
             for npz_path in tqdm(npz_files):
                 molecule_id = os.path.basename(npz_path).split(".")[0]
+                if "-" in molecule_id or "dsgdb9nsd" in molecule_id:
+                    continue
                 if os.path.exists(f"{save_dir}/{molecule_id}_dxtb_result.npz"):
                     continue
-                if 'dsgdb9nsd' in molecule_id:
-                    continue  # Skip dsgdb9nsd molecules
+                if init_guess_file:
+                    if molecule_id in init_guess.keys():
+                        init_charges = init_guess[molecule_id]
+                    else:
+                        continue
                 else:
                     try:
                         data = np.load(npz_path)
                         numbers = data["atomic_numbers"]
                         positions = data["positions"]
-                        calculate_dxtb(numbers, positions, molecule_id, save_dir)
+                        calculate_dxtb(numbers, positions, molecule_id, save_dir, scp_mode, init_charges)
                     except Exception as e:
                         print(f"Error processing {npz_path}: {e}")
             

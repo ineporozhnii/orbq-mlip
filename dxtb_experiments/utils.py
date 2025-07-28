@@ -57,7 +57,7 @@ def work_lmdb(file_path: str, file_name: str):
 
 
 def calculate_dxtb(
-    numbers: np.ndarray, positions: np.ndarray, molecule_id: str, save_dir: str
+    numbers: np.ndarray, positions: np.ndarray, molecule_id: str, save_dir: str, scp_mode: int, initial_charges: np.ndarray = None
 ) -> float:
     """
     Calculate dxTB single point energy and save results.
@@ -74,20 +74,29 @@ def calculate_dxtb(
     # Clone and convert input tensors to appropriate types
     numbers = torch.tensor(numbers).detach().to(torch.int64)
     positions = torch.tensor(positions).detach().to(torch.double).requires_grad_(True)
+    initial_charges = torch.tensor(initial_charges).detach().to(torch.double) if initial_charges is not None else None
 
     # Set up calculator configuration
     calc_config = {
         "dtype": torch.double,
         "device": torch.device("cpu"),
-        "opts": {"verbosity": 0, "maxiter": 1000, 'scp_mode': 0} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
+        "opts": {"verbosity": 0, "maxiter": 500, 'scp_mode': scp_mode, "damp": 0.1, 'scf_mode': dxtb.labels.SCF_MODE_FULL, "cache_charges": False, "cache_iterations": False} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
     }
     
     # Initialize GFN1 calculator
     calc = dxtb.calculators.GFN1Calculator(numbers, **calc_config)
     
+    if initial_charges is not None:
+        initial_charges = escn_to_dxtb_orbitals(
+            sorted_property_tensor=initial_charges,
+            angular_momentum_per_shell=calc.ihelp.angular,
+            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
+            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
+        )
+    
     # Measure calculation time
     start = time.time()
-    result = calc.singlepoint(positions)
+    result = calc.singlepoint(positions, initial_charges=initial_charges)
     calc_time = time.time() - start
     
     # Extract and convert results
