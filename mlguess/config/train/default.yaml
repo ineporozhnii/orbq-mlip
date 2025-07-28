@@ -50,6 +50,7 @@ callbacks:
   #   mode: ${train.monitor.mode}
   - _target_: mlguess.model.utils.PredictionScatterPlotCallback
     log_interval: 1
+    save_dir: ${core.storage_dir} + '/outputs'
 
   - _target_: lightning.pytorch.callbacks.ModelCheckpoint
     dirpath: ${core.storage_dir}

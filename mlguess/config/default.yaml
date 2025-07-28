@@ -1,6 +1,6 @@
 # metadata specialised for each experiment
 core:
-  expname: Cl2_o3lin_debug
+  expname: tmQM_NscfOOD_metadata_debug
   project_name: mlguess
   storage_dir: ${core.expname}
   version: 0.0.1
