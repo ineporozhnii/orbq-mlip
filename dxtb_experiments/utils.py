@@ -5,7 +5,6 @@ import dxtb
 from ase.io import read
 
 
-
 def load_xyz(filename: str) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Load a structure from an XYZ file.
@@ -54,6 +53,37 @@ def work_lmdb(file_path: str, file_name: str):
     # Create and return the dataset
     dataset = LmdbDataset({"src": full_path})
     return dataset
+
+
+def process_predictions_file(file_path):
+    """
+    Process a predictions NPZ file to extract atomic numbers, positions, and orbital properties.
+    """
+    data = np.load(file_path)
+    orbital_map = np.load("dxtb_experiments/dxtb_orbital_map.npz")
+    
+    all_numbers = []
+    all_positions = []
+    all_orbital_prop = []
+    n_atom = data["n_atom"]
+    flat_numbers = data["atom_types"]
+    flat_positions = data["coords"]
+    flat_orbital_prop = data["predictions"]
+    start_atom_idx = 0
+    start_orbital_idx = 0
+    for i in range(len(n_atom)):
+        n = n_atom[i]
+        all_numbers.append(flat_numbers[start_atom_idx:start_atom_idx + n])
+        all_positions.append(flat_positions[start_atom_idx:start_atom_idx + n])
+        n_orbitals = 0
+        for atom in flat_numbers[start_atom_idx:start_atom_idx + n]:
+            n_orbitals += orbital_map[str(atom)]
+ 
+        all_orbital_prop.append(flat_orbital_prop[start_orbital_idx:start_orbital_idx + n_orbitals])
+        start_atom_idx += n
+        start_orbital_idx += n_orbitals
+    
+    return all_numbers, all_positions, all_orbital_prop
 
 
 def calculate_dxtb(
