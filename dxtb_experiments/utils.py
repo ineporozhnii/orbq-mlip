@@ -103,7 +103,7 @@ def calculate_dxtb(args: tuple):
     
     npz_path, molecule_id, save_dir, scp_mode, initial_charges = args
     data = np.load(npz_path)
-    numbers = data["numbers"]
+    numbers = data["atomic_numbers"]
     positions = data["positions"] * AA2AU  # Convert Angstroms to atomic units
             
     # Clone and convert input tensors to appropriate types
