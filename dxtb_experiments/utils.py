@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import dxtb
 from ase.io import read
+from tad_mctc.units import AA2AU
 
 
 def load_xyz(filename: str) -> tuple[torch.Tensor, torch.Tensor]:
@@ -86,9 +87,7 @@ def process_predictions_file(file_path):
     return all_numbers, all_positions, all_orbital_prop
 
 
-def calculate_dxtb(
-    numbers: np.ndarray, positions: np.ndarray, molecule_id: str, save_dir: str, scp_mode: int, initial_charges: np.ndarray = None
-) -> float:
+def calculate_dxtb(args: tuple):
     """
     Calculate dxTB single point energy and save results.
     
@@ -101,6 +100,12 @@ def calculate_dxtb(
     Returns:
         float: Final calculated energy
     """
+    
+    npz_path, molecule_id, save_dir, scp_mode, initial_charges = args
+    data = np.load(npz_path)
+    numbers = data["numbers"]
+    positions = data["positions"] * AA2AU  # Convert Angstroms to atomic units
+            
     # Clone and convert input tensors to appropriate types
     numbers = torch.tensor(numbers).detach().to(torch.int64)
     positions = torch.tensor(positions).detach().to(torch.double).requires_grad_(True)
@@ -110,7 +115,7 @@ def calculate_dxtb(
     calc_config = {
         "dtype": torch.double,
         "device": torch.device("cpu"),
-        "opts": {"verbosity": 0, "maxiter": 500, 'scp_mode': scp_mode, "damp": 0.1, 'scf_mode': dxtb.labels.SCF_MODE_FULL, "cache_charges": False, "cache_iterations": False} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
+        "opts": {"verbosity": 0, "maxiter": 500, 'scp_mode': scp_mode, "damp": 0.5, 'scf_mode': dxtb.labels.SCF_MODE_FULL, "cache_charges": False, "cache_iterations": False} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
     }
     
     # Initialize GFN1 calculator
@@ -137,17 +142,11 @@ def calculate_dxtb(
     final_emo = result.emo.detach().numpy()
     final_energy = result.total.detach().numpy()
     
-    # Load initial charges
-    init_eeq_charges = torch.load(
-        "dxtb_experiments/temp/eeq_charges.pt", weights_only=True
-    ).detach().numpy()
-    
     # Save all results to a compressed NumPy file
     np.savez(
         f"{save_dir}/{molecule_id}_dxtb_result",
         numbers=numbers.detach().cpu().numpy(),
         coord=positions.detach().cpu().numpy(),
-        init_eeq_charges=init_eeq_charges,
         final_charges=final_charges,
         final_potential=final_potential,
         final_emo=final_emo,
