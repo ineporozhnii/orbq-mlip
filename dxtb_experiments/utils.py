@@ -115,7 +115,7 @@ def calculate_dxtb(args: tuple):
     calc_config = {
         "dtype": torch.double,
         "device": torch.device("cpu"),
-        "opts": {"verbosity": 0, "maxiter": 500, 'scp_mode': scp_mode, "damp": 0.5, 'scf_mode': dxtb.labels.SCF_MODE_FULL, "cache_charges": False, "cache_iterations": False} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
+        "opts": {"verbosity": 3, "maxiter": 500, 'scp_mode': scp_mode, "damp": 0.5, 'scf_mode': dxtb.labels.SCF_MODE_FULL, "cache_charges": False, "cache_iterations": False} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
     }
     
     # Initialize GFN1 calculator
@@ -131,7 +131,11 @@ def calculate_dxtb(args: tuple):
     
     # Measure calculation time
     start = time.time()
-    result = calc.singlepoint(positions, initial_charges=initial_charges)
+    try:
+        result = calc.singlepoint(positions, initial_charges=initial_charges)
+    except Exception as e:
+        print(f"Error in calculation for molecule {molecule_id}: {e}")
+        return None
     calc_time = time.time() - start
     
     # Extract and convert results
@@ -141,6 +145,9 @@ def calculate_dxtb(args: tuple):
     final_potential = result.potential.mono.cpu().detach().numpy()
     final_emo = result.emo.detach().numpy()
     final_energy = result.total.detach().numpy()
+    qdiff = result.qdiff.detach().numpy() if hasattr(result, 'qdiff') else np.array([-1.0])
+    ediff = result.ediff.detach().numpy() if hasattr(result, 'ediff') else np.array([-1.0])
+    pnorm = result.pnorm.detach().numpy() if hasattr(result, 'pnorm') else np.array([-1.0])
     
     # Save all results to a compressed NumPy file
     np.savez(
@@ -152,7 +159,10 @@ def calculate_dxtb(args: tuple):
         final_emo=final_emo,
         final_energy=final_energy,
         n_scf_iter=n_scf_iter,
-        calc_time=calc_time
+        calc_time=calc_time,
+        qdiff=qdiff,
+        ediff=ediff,
+        pnorm=pnorm
     )
     
     return final_energy
