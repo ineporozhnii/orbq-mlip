@@ -184,10 +184,10 @@ class eSCN(nn.Module):
         else:
             raise NotImplementedError
         
-        self.lin_out = o3.Linear(
-            irreps_in="128x0e + 128x1o + 128x2e",
-            irreps_out="2x0e + 1x1o + 1x2e",
-        )
+        # Output linear layer using e3nn.o3.Linear
+        irreps_in = f"{self.sphere_channels}x0e + {self.sphere_channels}x1o + {self.sphere_channels}x2e"
+        irreps_out = "2x0e + 1x1o + 1x2e"
+        self.lin_out = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out)
  
         
     def forward(self, data):
