@@ -1,20 +1,11 @@
+import os
 import torch 
 import torch.optim as optim
 from bisect import bisect
 from lightning.pytorch.callbacks import Callback
+from lightning.pytorch.callbacks import BasePredictionWriter
 import matplotlib.pyplot as plt
 import numpy as np
-
-from mlguess.common.utils import scatter
-
-def get_nmape(pred_density, density, batch=None):
-    diff = pred_density - density
-    sum_over = list(range(1, diff.dim()))
-    if batch is None:
-        return torch.abs(diff).sum(dim=sum_over) / torch.abs(density).sum(dim=sum_over) * 100.
-    else:
-        return (scatter(diff.abs(), batch, dim_size=batch.max() + 1).abs() / 
-                scatter(density.abs(), batch, dim_size=batch.max() + 1).abs() * 100.)
 
 def warmup_lr_milestone(current_step: int, optim_config):
     """
@@ -65,15 +56,15 @@ class WarmupMilestoneScheduler(optim.lr_scheduler.LambdaLR):
     
 
 class PredictionScatterPlotCallback(Callback):
-    def __init__(self, log_interval: int = 1, save_dir: str = "",  max_charges_plot: int = 200_000):
+    def __init__(self, log_interval: int = 1,  max_charges_plot: int = 200_000):
         """
         Callback to log scatter plot of predictions vs ground truth to WandB.
 
         Args:
             log_interval: Interval (in epochs) at which to log the scatter plot.
+            max_charges_plot: Maximum number of orbital charges to plot in the scatter plot. (Above 200k WandB interactive plots become slow)
         """
         self.log_interval = log_interval
-        self.save_dir = save_dir
         self.max_charges_plot = max_charges_plot
         self.n_atom = []
         self.atom_types = []
@@ -114,20 +105,20 @@ class PredictionScatterPlotCallback(Callback):
             trainer.logger.experiment.log({"scatter_plot": fig})
             plt.close('all')
             
-            n_atom = np.array(self.n_atom)
-            atom_types = np.array(self.atom_types)
-            coords = np.array(self.coords)
-            ground_truth = np.array(self.ground_truth)
-            predictions = np.array(self.predictions)
-            save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.npz"
-            np.savez(
-                save_path,
-                n_atom=n_atom,
-                atom_types=atom_types,
-                coords=coords,
-                ground_truth=ground_truth,
-                predictions=predictions
-            )
+            # n_atom = np.array(self.n_atom)
+            # atom_types = np.array(self.atom_types)
+            # coords = np.array(self.coords)
+            # ground_truth = np.array(self.ground_truth)
+            # predictions = np.array(self.predictions)
+            # save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.npz"
+            # np.savez(
+            #     save_path,
+            #     n_atom=n_atom,
+            #     atom_types=atom_types,
+            #     coords=coords,
+            #     ground_truth=ground_truth,
+            #     predictions=predictions
+            # )
 
         # Clear stored predictions and ground truth for the next epoch
         self.n_atom = []
@@ -135,3 +126,109 @@ class PredictionScatterPlotCallback(Callback):
         self.coords = []
         self.predictions = []
         self.ground_truth = []
+
+
+class ValidationDataLogger(Callback):
+    def __init__(self, save_dir="./"):
+        super().__init__()
+        self.save_dir = save_dir
+        self.outputs = []
+
+    def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
+        """Called when the validation batch ends."""
+        if outputs:
+            # Move outputs to CPU to save GPU memory
+            cpu_outputs = {key: val.cpu() for key, val in outputs.items()}
+            self.outputs.append(cpu_outputs)
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        """Called when the validation epoch ends."""
+        if not self.outputs or trainer.sanity_checking:
+            return
+
+        # 1. Concatenate outputs from all batches on the current GPU
+        preds = torch.cat([x['preds'] for x in self.outputs])
+        targets = torch.cat([x['targets'] for x in self.outputs])
+        # Assuming these tensors have the same first dimension as preds
+        n_atom = torch.cat([x['n_atom'] for x in self.outputs])
+        atom_types = torch.cat([x['atom_types'] for x in self.outputs])
+        coords = torch.cat([x['coords'] for x in self.outputs])
+
+        # Move tensors to the correct device for gathering
+        preds = preds.to(pl_module.device)
+        targets = targets.to(pl_module.device)
+        n_atom = n_atom.to(pl_module.device)
+        atom_types = atom_types.to(pl_module.device)
+        coords = coords.to(pl_module.device)
+
+        # 2. Pad tensors to the same size
+        local_size = torch.tensor(preds.shape[0], device=pl_module.device)
+        
+        # Gather the sizes of the first dimension of 'preds' from all GPUs
+        all_sizes = pl_module.all_gather(local_size)
+
+        max_size = torch.max(all_sizes).item()
+
+        # Pad all tensors to the max_size
+        if local_size < max_size:
+            pad_size = max_size - local_size
+            
+            # Create padding with appropriate dimensions
+            preds_pad = torch.zeros(pad_size, *preds.shape[1:], dtype=preds.dtype, device=preds.device)
+            targets_pad = torch.zeros(pad_size, *targets.shape[1:], dtype=targets.dtype, device=targets.device)
+            n_atom_pad = torch.zeros(pad_size, *n_atom.shape[1:], dtype=n_atom.dtype, device=n_atom.device)
+            atom_types_pad = torch.zeros(pad_size, *atom_types.shape[1:], dtype=atom_types.dtype, device=atom_types.device)
+            coords_pad = torch.zeros(pad_size, *coords.shape[1:], dtype=coords.dtype, device=coords.device)
+            
+            preds = torch.cat((preds, preds_pad), dim=0)
+            targets = torch.cat((targets, targets_pad), dim=0)
+            n_atom = torch.cat((n_atom, n_atom_pad), dim=0)
+            atom_types = torch.cat((atom_types, atom_types_pad), dim=0)
+            coords = torch.cat((coords, coords_pad), dim=0)
+
+        # 3. Gather padded outputs from all GPUs
+        # This operation must be called on all processes
+        all_preds = pl_module.all_gather(preds)
+        all_targets = pl_module.all_gather(targets)
+        all_n_atom = pl_module.all_gather(n_atom)
+        all_atom_types = pl_module.all_gather(atom_types)
+        all_coords = pl_module.all_gather(coords)
+
+        # 4. Save aggregated data on rank 0
+        if trainer.global_rank == 0:
+            # Reshape and unpad gathered tensors for saving
+            # Example: from (num_gpus, max_size, ...) to (total_samples, ...)
+            
+            preds_list = []
+            targets_list = []
+            n_atom_list = []
+            atom_types_list = []
+            coords_list = []
+
+            for i in range(all_sizes.shape[0]):
+                size = all_sizes[i].item()
+                preds_list.append(all_preds[i][:size])
+                targets_list.append(all_targets[i][:size])
+                n_atom_list.append(all_n_atom[i][:size])
+                atom_types_list.append(all_atom_types[i][:size])
+                coords_list.append(all_coords[i][:size])
+                
+            flat_preds = torch.cat(preds_list).cpu().numpy()
+            flat_targets = torch.cat(targets_list).cpu().numpy()
+            flat_n_atom = torch.cat(n_atom_list).cpu().numpy()
+            flat_atom_types = torch.cat(atom_types_list).cpu().numpy()
+            flat_coords = torch.cat(coords_list).cpu().numpy()
+
+            save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.npz"
+            print(f"Saving validation data to {save_path}")
+            np.savez(
+                save_path,
+                n_atom=flat_n_atom,
+                atom_types=flat_atom_types,
+                coords=flat_coords,
+                targets=flat_targets,
+                predictions=flat_preds
+            )
+
+        # 5. Clean up
+        self.outputs.clear()

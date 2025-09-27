@@ -7,7 +7,6 @@ from torch_ema import ExponentialMovingAverage
 from mlguess.common.utils import scatter
 from mlguess.model.basis_set import get_basis_set, transform_basis_set, aug_etb_for_basis
 from mlguess.model.gtos import GTOs
-from mlguess.model.utils import get_nmape
 
 class ChgLightningModule(LightningModule):
     """
