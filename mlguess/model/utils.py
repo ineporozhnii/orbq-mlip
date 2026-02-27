@@ -1,11 +1,9 @@
-import os
 import torch 
+import torch.nn as nn
 import torch.optim as optim
 from bisect import bisect
 from lightning.pytorch.callbacks import Callback
-from lightning.pytorch.callbacks import BasePredictionWriter
 import matplotlib.pyplot as plt
-import numpy as np
 
 def warmup_lr_milestone(current_step: int, optim_config):
     """
@@ -69,63 +67,78 @@ class PredictionScatterPlotCallback(Callback):
         self.n_atom = []
         self.atom_types = []
         self.coords = []
-        self.predictions = []
-        self.ground_truth = []
+        
+        # Buffers for charges and energy
+        self.pred_charges = []
+        self.target_charges = []
+        self.pred_energy = []
+        self.target_energy = []
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         """
         Collect predictions and ground truth after each validation batch.
         """
-        outputs = pl_module(batch)
-        preds = outputs[1]
-        targets = outputs[2]
+        # Assume outputs contain the keys described in the prompt
         self.n_atom.extend(batch["n_atom"].detach().cpu().numpy())
         self.atom_types.extend(batch["atom_types"].detach().cpu().numpy())
         self.coords.extend(batch["coords"].detach().cpu().numpy())
-        self.predictions.extend(preds.detach().cpu().numpy())
-        self.ground_truth.extend(targets.detach().cpu().numpy())
+        
+        if "pred_charges" in outputs:
+            self.pred_charges.extend(outputs["pred_charges"].detach().cpu().numpy())
+            self.target_charges.extend(outputs["target_charges"].detach().cpu().numpy())
+        
+        if "pred_energy" in outputs:
+            self.pred_energy.extend(outputs["pred_energy"].detach().cpu().numpy())
+            self.target_energy.extend(outputs["target_energy"].detach().cpu().numpy())
 
     def on_validation_epoch_end(self, trainer, pl_module):
         """
         Generate and log the scatter plot at the end of the validation epoch.
         """
         if trainer.current_epoch % self.log_interval == 0:
-            # Create scatter plot
-            fig = plt.figure(figsize=(8, 8))
+            # Create subplots: one for Charges, one for Energy
+            fig, axes = plt.subplots(1, 2, figsize=(16, 8))
         
-            plt.scatter(self.ground_truth[:self.max_charges_plot], self.predictions[:self.max_charges_plot], alpha=0.2)
-            # Add 1:1 line
-            min_val = min(min(self.ground_truth), min(self.predictions))
-            max_val = max(max(self.ground_truth), max(self.predictions))
-            plt.plot([min_val, max_val], [min_val, max_val], 'k--', lw=2, alpha=0.5)
-            plt.xlabel("Ground Truth")
-            plt.ylabel("Predictions")
-            plt.title("Predictions vs Ground Truth")
-            plt.grid(True)
+            # --- Plot Charges ---
+            ax_c = axes[0]
+            num_plot = min(len(self.target_charges), self.max_charges_plot)
+            ax_c.scatter(self.target_charges[:num_plot], self.pred_charges[:num_plot], alpha=0.2)
+            
+            if len(self.target_charges) > 0:
+                min_val = min(min(self.target_charges), min(self.pred_charges))
+                max_val = max(max(self.target_charges), max(self.pred_charges))
+                ax_c.plot([min_val, max_val], [min_val, max_val], 'k--', lw=2, alpha=0.5)
+                
+            ax_c.set_xlabel("Target Charges")
+            ax_c.set_ylabel("Predicted Charges")
+            ax_c.set_title("Charges: Preds vs GT")
+            ax_c.grid(True)
+
+            # --- Plot Energy ---
+            ax_e = axes[1]
+            ax_e.scatter(self.target_energy, self.pred_energy, alpha=0.5, c='orange')
+            
+            if len(self.target_energy) > 0:
+                e_min = min(min(self.target_energy), min(self.pred_energy))
+                e_max = max(max(self.target_energy), max(self.pred_energy))
+                ax_e.plot([e_min, e_max], [e_min, e_max], 'k--', lw=2, alpha=0.5)
+            
+            ax_e.set_xlabel("Target Energy")
+            ax_e.set_ylabel("Predicted Energy")
+            ax_e.set_title("Energy: Preds vs GT")
+            ax_e.grid(True)
+
             trainer.logger.experiment.log({"scatter_plot": fig})
             plt.close('all')
-            
-            # n_atom = np.array(self.n_atom)
-            # atom_types = np.array(self.atom_types)
-            # coords = np.array(self.coords)
-            # ground_truth = np.array(self.ground_truth)
-            # predictions = np.array(self.predictions)
-            # save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.npz"
-            # np.savez(
-            #     save_path,
-            #     n_atom=n_atom,
-            #     atom_types=atom_types,
-            #     coords=coords,
-            #     ground_truth=ground_truth,
-            #     predictions=predictions
-            # )
 
         # Clear stored predictions and ground truth for the next epoch
         self.n_atom = []
         self.atom_types = []
         self.coords = []
-        self.predictions = []
-        self.ground_truth = []
+        self.pred_charges = []
+        self.target_charges = []
+        self.pred_energy = []
+        self.target_energy = []
 
 
 class ValidationDataLogger(Callback):
@@ -137,8 +150,11 @@ class ValidationDataLogger(Callback):
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx, dataloader_idx=0):
         """Called when the validation batch ends."""
         if outputs:
-            # Move outputs to CPU to save GPU memory
             cpu_outputs = {key: val.cpu() for key, val in outputs.items()}
+            cpu_outputs['n_atom'] = batch['n_atom'].cpu()
+            cpu_outputs['atom_types'] = batch['atom_types'].cpu()
+            cpu_outputs['coords'] = batch['coords'].cpu()
+            
             self.outputs.append(cpu_outputs)
 
     def on_validation_epoch_end(self, trainer, pl_module):
@@ -146,89 +162,88 @@ class ValidationDataLogger(Callback):
         if not self.outputs or trainer.sanity_checking:
             return
 
-        # 1. Concatenate outputs from all batches on the current GPU
-        preds = torch.cat([x['preds'] for x in self.outputs])
-        targets = torch.cat([x['targets'] for x in self.outputs])
-        # Assuming these tensors have the same first dimension as preds
-        n_atom = torch.cat([x['n_atom'] for x in self.outputs])
-        atom_types = torch.cat([x['atom_types'] for x in self.outputs])
-        coords = torch.cat([x['coords'] for x in self.outputs])
-
-        # Move tensors to the correct device for gathering
-        preds = preds.to(pl_module.device)
-        targets = targets.to(pl_module.device)
-        n_atom = n_atom.to(pl_module.device)
-        atom_types = atom_types.to(pl_module.device)
-        coords = coords.to(pl_module.device)
-
-        # 2. Pad tensors to the same size
-        local_size = torch.tensor(preds.shape[0], device=pl_module.device)
+        # List of keys we want to gather and save
+        keys_to_gather = [
+            'pred_charges', 'target_charges', 
+            'pred_energy', 'target_energy', 
+            'n_atom', 'atom_types', 'coords'
+        ]
         
-        # Gather the sizes of the first dimension of 'preds' from all GPUs
-        all_sizes = pl_module.all_gather(local_size)
-
-        max_size = torch.max(all_sizes).item()
-
-        # Pad all tensors to the max_size
-        if local_size < max_size:
-            pad_size = max_size - local_size
+        final_data = {}
+        # Process each key independently to handle different dimensions (e.g. atom-wise vs graph-wise)
+        for key in keys_to_gather:
+            # Check if key exists in the first batch output
+            if key not in self.outputs[0]:
+                continue
             
-            # Create padding with appropriate dimensions
-            preds_pad = torch.zeros(pad_size, *preds.shape[1:], dtype=preds.dtype, device=preds.device)
-            targets_pad = torch.zeros(pad_size, *targets.shape[1:], dtype=targets.dtype, device=targets.device)
-            n_atom_pad = torch.zeros(pad_size, *n_atom.shape[1:], dtype=n_atom.dtype, device=n_atom.device)
-            atom_types_pad = torch.zeros(pad_size, *atom_types.shape[1:], dtype=atom_types.dtype, device=atom_types.device)
-            coords_pad = torch.zeros(pad_size, *coords.shape[1:], dtype=coords.dtype, device=coords.device)
-            
-            preds = torch.cat((preds, preds_pad), dim=0)
-            targets = torch.cat((targets, targets_pad), dim=0)
-            n_atom = torch.cat((n_atom, n_atom_pad), dim=0)
-            atom_types = torch.cat((atom_types, atom_types_pad), dim=0)
-            coords = torch.cat((coords, coords_pad), dim=0)
-
-        # 3. Gather padded outputs from all GPUs
-        # This operation must be called on all processes
-        all_preds = pl_module.all_gather(preds)
-        all_targets = pl_module.all_gather(targets)
-        all_n_atom = pl_module.all_gather(n_atom)
-        all_atom_types = pl_module.all_gather(atom_types)
-        all_coords = pl_module.all_gather(coords)
-
-        # 4. Save aggregated data on rank 0
-        if trainer.global_rank == 0:
-            # Reshape and unpad gathered tensors for saving
-            # Example: from (num_gpus, max_size, ...) to (total_samples, ...)
-            
-            preds_list = []
-            targets_list = []
-            n_atom_list = []
-            atom_types_list = []
-            coords_list = []
-
-            for i in range(all_sizes.shape[0]):
-                size = all_sizes[i].item()
-                preds_list.append(all_preds[i][:size])
-                targets_list.append(all_targets[i][:size])
-                n_atom_list.append(all_n_atom[i][:size])
-                atom_types_list.append(all_atom_types[i][:size])
-                coords_list.append(all_coords[i][:size])
+            tensors = [x[key] for x in self.outputs if key in x]
+            if not tensors:
+                continue
                 
-            flat_preds = torch.cat(preds_list).cpu().numpy()
-            flat_targets = torch.cat(targets_list).cpu().numpy()
-            flat_n_atom = torch.cat(n_atom_list).cpu().numpy()
-            flat_atom_types = torch.cat(atom_types_list).cpu().numpy()
-            flat_coords = torch.cat(coords_list).cpu().numpy()
+            local_tensor = torch.cat(tensors).to(pl_module.device)
 
-            save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.npz"
+            local_size = torch.tensor(local_tensor.shape[0], device=pl_module.device)
+            all_sizes = pl_module.all_gather(local_size)
+            max_size = torch.max(all_sizes).item()
+
+            if local_size < max_size:
+                pad_size = max_size - local_size
+                padding = torch.zeros(pad_size, *local_tensor.shape[1:], dtype=local_tensor.dtype, device=local_tensor.device)
+                local_tensor = torch.cat((local_tensor, padding), dim=0)
+
+            gathered_tensors = pl_module.all_gather(local_tensor)
+            if trainer.global_rank == 0:
+                data_list = []
+                for i in range(all_sizes.shape[0]):
+                    size = all_sizes[i].item()
+                    data_list.append(gathered_tensors[i][:size])
+                
+                final_data[key] = torch.cat(data_list).cpu()
+
+        if trainer.global_rank == 0:
+            save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.pt"
             print(f"Saving validation data to {save_path}")
-            np.savez(
-                save_path,
-                n_atom=flat_n_atom,
-                atom_types=flat_atom_types,
-                coords=flat_coords,
-                targets=flat_targets,
-                predictions=flat_preds
-            )
-
-        # 5. Clean up
+            torch.save(final_data, save_path)
+            
         self.outputs.clear()
+        
+
+class UncertaintyWeightedLoss(nn.Module):
+    def __init__(self):
+        super(UncertaintyWeightedLoss, self).__init__()
+        self.log_var_e = nn.Parameter(torch.tensor(0.0))
+        self.log_var_q = nn.Parameter(torch.tensor(0.0))
+
+    def forward(self, loss_e, loss_q):
+        """
+        Args:
+            loss_e (torch.Tensor): The raw scalar loss for energy.
+            loss_q (torch.Tensor): The raw scalar loss for charges.
+        Returns:
+            torch.Tensor: The combined, weighted scalar loss.
+        """
+        precision_e = torch.exp(-self.log_var_e)
+        precision_q = torch.exp(-self.log_var_q)
+        
+        weighted_loss_e = 0.5 * precision_e * loss_e + 0.5 * self.log_var_e
+        weighted_loss_q = 0.5 * precision_q * loss_q + 0.5 * self.log_var_q
+
+        return weighted_loss_e + weighted_loss_q
+    
+
+class UncertaintyWeightedMAELoss(nn.Module):
+    def __init__(self):
+        super(UncertaintyWeightedMAELoss, self).__init__()
+        self.log_scale_e = nn.Parameter(torch.zeros(1))
+        self.log_scale_q = nn.Parameter(torch.zeros(1))
+
+    def forward(self, loss_e, loss_q):
+        total_loss = 0.0
+
+        precision_e = torch.exp(-self.log_scale_e)
+        precision_q = torch.exp(-self.log_scale_q)
+        
+        total_loss = total_loss + (precision_e * loss_e + self.log_scale_e)
+        total_loss = total_loss + (precision_q * loss_q + self.log_scale_q)
+
+        return total_loss
