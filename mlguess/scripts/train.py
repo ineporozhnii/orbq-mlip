@@ -126,10 +126,6 @@ def run(cfg: DictConfig) -> str:
             ckpt = str(ckpts[ckpt_ix])
         else:
             ckpt = None
-    
-    if cfg.model.expo_trainable:
-        model.load_state_dict(torch.load(ckpt)["state_dict"], strict=False)
-        ckpt = None
             
     pylogger.info("starting training.")
     trainer.fit(
@@ -146,6 +142,7 @@ def run(cfg: DictConfig) -> str:
     # Logger closing to release resources/avoid multi-run conflicts
     if logger is not None:
         logger.experiment.finish()
+
 
 @hydra.main(config_path=str(PROJECT_ROOT / "mlguess" / "config"), config_name="default", version_base="1.1")
 def main(cfg: omegaconf.DictConfig):

@@ -64,13 +64,8 @@ def process_tar_file_to_lmdb(mp_arg):
             data_object = AtomicData.from_file(
                 fcontent=filecontent,
                 finfo=fileinfo,
-                build_method=args.build_method,
                 z_table=z_table,
                 atom_cutoff=args.atom_cutoff,
-                probe_cutoff=args.probe_cutoff,
-                vnode_method=args.vnode_method,
-                vnode_factor=args.vnode_factor,
-                vnode_res=args.vnode_res,
                 disable_pbc=args.disable_pbc,
                 max_neighbors=args.max_neighbors,
                 device=device,
@@ -142,13 +137,6 @@ def get_parser() -> argparse.ArgumentParser:
         help="No. of processes to use for feature extraction",
     )
     parser.add_argument(
-        "--build_method",
-        type=str,
-        default='vnode',
-        choices=["vnode", "probe"],
-        help="Method to use for building graphs",
-    )
-    parser.add_argument(
         "--atom_cutoff",
         type=float,
         default=4.0,
@@ -159,31 +147,6 @@ def get_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Max number of neighbors for each atom in the graph",
-    )
-    parser.add_argument(
-        "--probe_cutoff",
-        type=float,
-        default=4.0,
-        help="Cutoff radius for probe edges",
-    )
-    parser.add_argument(
-        "--vnode_method",
-        type=str,
-        default='bond',
-        choices=["bond", "none"],
-        help="Method to use for virtual node generation",
-    )
-    parser.add_argument(
-        "--vnode_factor",
-        type=int,
-        default=3,
-        help="Maximum number of iterations for virtual node generation as a factor of number of atoms",
-    )
-    parser.add_argument(
-        "--vnode_res",
-        type=float,
-        default=0.8,
-        help="vnode resolution in the obb method",
     )
     parser.add_argument(
         "--device",
