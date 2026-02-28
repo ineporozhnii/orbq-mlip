@@ -1,3 +1,8 @@
+"""
+adapted from: 
+https://github.com/kyonofx/scdp/blob/main/scdp/model/gtos.py
+"""
+
 from typing import Optional
 import math
 import torch
