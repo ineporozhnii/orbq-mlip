@@ -1,5 +1,8 @@
 """
-Util functions for using pre-defined DFT basis sets and even-tempered augmentation.
+Util functions for using pre-defined DFT and xTB basis sets
+
+adapted from: 
+https://github.com/kyonofx/scdp/blob/main/scdp/model/basis_set.py
 """
 import os
 import itertools
@@ -10,7 +13,7 @@ from mlguess.common.constants import orbital_config
 
 def get_basis_set(name='def2-universal-JKFIT'):
     """
-    get basis set from BSE.
+    get basis set from local xTB or BSE.
     """
     if name in ['gfn1', 'gfn2']:
         basis = load_xtb_basis(name)
@@ -189,14 +192,12 @@ def aug_etb_for_basis(basis, beta=2.0, lmax_restriction=False, lmax_relax=0):
 
     return newbasis
 
-# def load_xtb_basis(name):
-#     combined_elements_data = {}
-#     combined_elements_data['elements'] = {}
-
-        
     
 def load_xtb_basis(name):
-    
+    """
+    Load xTB basis set from the local folder. 
+    The basis files should be in NWChem format and placed in the 'basis_sets/gfn1' and 'basis_sets/gfn2' folders respectively.
+    """
     if name == 'gfn1':
         folder_path = os.path.join(
             os.path.dirname(__file__), 'basis_sets', 'gfn1')
@@ -220,9 +221,7 @@ def load_xtb_basis(name):
     if not potential_files:
         print(f"No potential basis files found in '{folder_path}'.")
         return None
-
-    # This dictionary will store the basis data for each element,
-    # with atomic numbers (as strings) as keys.
+    
     combined_elements_data = {}
     combined_elements_data['elements'] = {}
     
@@ -236,20 +235,17 @@ def load_xtb_basis(name):
             if z_str == '1':
                 for i in range(len(el_data['electron_shells'])):
                     for j in range(len(el_data['electron_shells'][i]['coefficients'])):
-                        el_data['electron_shells'][i]['coefficients'][j] = [0] #[float(c) for c in el_data['electron_shells'][i]['coefficients'][j]]
-                    el_data['electron_shells'][i]['exponents'] = [0]#[float(e) for e in el_data['electron_shells'][i]['exponents']]
+                        el_data['electron_shells'][i]['coefficients'][j] = [0]
+                    el_data['electron_shells'][i]['exponents'] = [0]
                     el_data['electron_shells'][i]['angular_momentum'] = el_data['electron_shells'][i]['angular_momentum'][0]
             else:
                 for i in range(len(el_data['electron_shells'])):
                     for j in range(len(el_data['electron_shells'][i]['coefficients'])):
-                        el_data['electron_shells'][i]['coefficients'][j] = [0] #[float(c) for c in el_data['electron_shells'][i]['coefficients'][j]]
-                    el_data['electron_shells'][i]['exponents'] = [0]#[float(e) for e in el_data['electron_shells'][i]['exponents']]
+                        el_data['electron_shells'][i]['coefficients'][j] = [0]
+                    el_data['electron_shells'][i]['exponents'] = [0]
                     el_data['electron_shells'][i]['angular_momentum'] = i
                     
             combined_elements_data['elements'][z_str] = el_data
-    
-    print(f"  Successfully loaded {name} data.")
-            
     
     return combined_elements_data
     
