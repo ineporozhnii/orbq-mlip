@@ -1,132 +1,34 @@
-import os
 import io
-import pickle
-import tempfile
-import json
 import torch
 import numpy as np
 import dxtb
 from dxtb_experiments.utils import dxtb_to_escn_orbitals
-import ase
-from ase.calculators.vasp import VaspChargeDensity
-
-from mlguess.common.utils import cell_heights
-
-def read_vasp(filecontent, read_spin=False):
-    # Write to tmp file and read using ASE
-    tmpfd, tmppath = tempfile.mkstemp(prefix="temp")
-    tmpfile = os.fdopen(tmpfd, "wb")
-    tmpfile.write(filecontent)
-    tmpfile.close()
-    vasp_charge = VaspChargeDensity(filename=tmppath)
-    os.remove(tmppath)
-    try:
-        density = vasp_charge.chg[-1]  # separate density
-        if read_spin:
-            if len(vasp_charge.chgdiff) != 0:
-                spin_density = vasp_charge.chgdiff[-1]
-            else:
-                # assume non-spin-polarized if there's no spin density data
-                spin_density = np.zeros_like(density)
-            density = np.stack([density, spin_density], axis=-1)
-    except IndexError as e:
-        print(e, f"\nFileconents of {filecontent} do not contain chg field")
-    atoms = vasp_charge.atoms[-1]  # separate atom positions
-    atomic_numbers = torch.from_numpy(atoms.numbers).long()
-    cart_coords = torch.from_numpy(atoms.positions).float()
-    cell = torch.from_numpy(atoms.cell.array).float()
-    chg_density = torch.from_numpy(density).float()
-    return atomic_numbers, cart_coords, cell, chg_density, None, atoms
-
-
-def read_cube(filecontent):
-    textbuf = io.StringIO(filecontent.decode())
-    cube = ase.io.cube.read_cube(textbuf)
-    # sometimes there is an entry at index 3
-    # denoting the number of values for each grid position
-    origin = cube["origin"][0:3]
-    # by convention the cube electron density is given in electrons/Bohr^3,
-    # and ase read_cube does not convert to electrons/Å^3, so we do the conversion here
-    cube["data"] *= 1.0 / ase.units.Bohr**3
-    chg_density = torch.from_numpy(cube["data"])
-    atoms = cube["atoms"]
-    atomic_numbers = torch.from_numpy(atoms.numbers).long()
-    cart_coords = torch.from_numpy(atoms.positions).float()
-    cell = torch.from_numpy(cube["cell"]).float()
-    origin = torch.from_numpy(origin).float()
-    return atomic_numbers, cart_coords, cell, chg_density, origin, None
-
-def read_2d_tensor(s):
-    return torch.FloatTensor([[float(x) for x in line] for line in s])
-
-def read_json(filecontent):
-    data = json.loads(filecontent.decode())
-    scale = float(data['vector'][0][0])
-    cell = read_2d_tensor(data['lattice'][0]) * scale
-    elements = data['elements'][0]
-    n_atoms = [int(s) for s in data['elements_number'][0]]
-
-    tot_atoms = sum(n_atoms)
-    atom_coords = read_2d_tensor(data['coordinates'][0])
-    atom_types = torch.empty(tot_atoms, dtype=torch.long)
-    idx = 0
-    for elem, n in zip(elements, n_atoms):
-        atom_types[idx:idx + n] = ase.data.atomic_numbers[elem]
-        idx += n
-    atom_coords = atom_coords @ cell
-    
-    shape = [int(s) for s in data['FFTgrid'][0]]
-
-    n_grid = shape[0] * shape[1] * shape[2]
-    n_line = (n_grid + 9) // 10
-    # pylint: disable=E1136
-    density = torch.FloatTensor([
-        float(s) if not s.startswith('*') else 0.
-        for line in data['chargedensity'][0][:n_line]
-        for s in line
-    ]).view(-1)[:n_grid]
-    volume = torch.linalg.det(cell).abs()
-    density = density / volume
-    density = density.view(shape[2], shape[1], shape[0]).transpose(0, 2).contiguous()
-    
-    return atom_types, atom_coords, cell, density, None, None
-
+from tad_mctc.units import AA2AU
 
 def read_npz(filecontent):
     data = np.load(io.BytesIO(filecontent))
     atomic_numbers = torch.from_numpy(data["numbers"]).long()
-    cart_coords = torch.from_numpy(data["coord"]).float()
-    orbital_charges = torch.from_numpy(data["final_charges"]).float()
+    cart_coords = torch.from_numpy(data["coord"]).float() / AA2AU
+    orbital_charges_dxtb = torch.from_numpy(data["final_charges"]).float()
+    total_energy = torch.tensor(data['total_energy_corrected']).float()
+    
+    atomic_charges_mulliken = torch.from_numpy(data["mulliken_charges"]).float()
+    atomic_charges_lowdin = torch.from_numpy(data["lowdin_charges"]).float()
+    atomic_charges_dxtb = torch.from_numpy(data["dxtb_charges"]).float()
     cell = torch.tensor([[100, 0, 0],
                          [0, 100, 0],
                          [0, 0, 100]]).float()
     
     calc = dxtb.calculators.GFN1Calculator(atomic_numbers)
-    orbital_charges = dxtb_to_escn_orbitals(
+    orbital_charges_dxtb = dxtb_to_escn_orbitals(
         angular_momentum_per_shell=calc.ihelp.angular,
-        property_tensor=orbital_charges,
+        property_tensor=orbital_charges_dxtb,
         map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
         map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
     )  # convert orbital charges ordering to escn format
 
-    return atomic_numbers, cart_coords, cell, orbital_charges, None
-
-
-def calculate_grid_pos(
-    density: torch.Tensor, cell: torch.Tensor, origin=None
-) -> torch.Tensor:
-    lx, ly, lz = density.shape
-    grid_pos = torch.meshgrid(
-        torch.arange(lx) / lx,
-        torch.arange(ly) / ly,
-        torch.arange(lz) / lz,
-        indexing="ij",
-    )
-    grid_pos = torch.stack(grid_pos, 3).to(cell.device)
-    grid_pos = torch.matmul(grid_pos, cell)
-    if origin is not None:
-        grid_pos = grid_pos + origin
-    return grid_pos
+    return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, \
+            atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb
 
 
 def make_graph(
@@ -151,12 +53,7 @@ def make_graph(
         repeat_offsets = torch.tensor([[0, 0, 0]]).to(cell.device)
         shifts = torch.tensor([[0, 0, 0]], dtype=float).to(cell.device)
     else:
-        n_rep = torch.ceil(cutoff / (cell_heights(cell) + 1e-12))
-        _rep = lambda dim: torch.arange(-n_rep[dim], n_rep[dim] + 1)
-        repeat_offsets = torch.tensor(
-            [(x, y, z) for x in _rep(0) for y in _rep(1) for z in _rep(2)]
-        ).to(cell.device)
-        shifts = torch.matmul(repeat_offsets, cell)
+        raise NotImplementedError("PBC is not implemented yet.")
         
     # m x supercell x 3. minus shifts because atoms are sources
     shifted = coords_src.unsqueeze(1) - shifts.unsqueeze(0)
