@@ -8,7 +8,6 @@ Adapted from:
 https://github.com/FAIR-Chem/fairchem/tree/main/src/fairchem/core/models/scn
 """
 
-import logging
 import time
 from typing import List
 
@@ -29,10 +28,9 @@ from mlguess.model.scn.smearing import (
     SiLUSmearing,
 )
 
+from mlguess.model.scn.sampling import CalcSpherePoints
+
 from e3nn import o3
-from e3nn.nn import BatchNorm
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt
 
 class eSCN(nn.Module):
     """Equivariant Spherical Channel Network
@@ -71,7 +69,6 @@ class eSCN(nn.Module):
         basis_width_scalar: float = 1.0,
         distance_resolution: float = 0.02,
         show_timing_info: bool = False,
-        expo_trainable: bool = False,
         *args, **kwargs
     ) -> None:
         super().__init__()
@@ -93,6 +90,7 @@ class eSCN(nn.Module):
         )
         self.basis_width_scalar = basis_width_scalar
         self.distance_function = distance_function
+        self.device = torch.cuda.current_device()
 
         # variables used for display purposes
         self.counter = 0
@@ -169,8 +167,6 @@ class eSCN(nn.Module):
             self.layer_blocks.append(block)
             
         self.max_n_orbitals_per_L = max_n_orbitals_per_L
-        # assumes len(lmax_list) == 1
-        self.expo_trainable = expo_trainable
         
         if max(self.lmax_list) == 1:
             self.coeff_idx = torch.tensor([0, 1, 1*self.sphere_channels, 2*self.sphere_channels, 3*self.sphere_channels]).long()
@@ -187,7 +183,32 @@ class eSCN(nn.Module):
         # Output linear layer using e3nn.o3.Linear
         irreps_in = f"{self.sphere_channels}x0e + {self.sphere_channels}x1o + {self.sphere_channels}x2e"
         irreps_out = "2x0e + 1x1o + 1x2e"
+        # irreps_out = "2x0e + 3x0e + 5x0e" # invariant output
         self.lin_out = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out)
+        
+        self.energy_block = EnergyBlock(
+            self.sphere_channels_all, self.num_sphere_samples, self.act
+        )
+        
+        self.atomic_charge_block = AtomicChargeBlock(
+            self.sphere_channels_all, self.num_sphere_samples, self.act
+        )
+        
+        # Create a roughly evenly distributed point sampling of the sphere for the output blocks
+        self.sphere_points = CalcSpherePoints(
+            self.num_sphere_samples, self.device
+        ).detach()
+        
+        # For each spherical point, compute the spherical harmonic coefficient weights
+        self.sphharm_weights = []
+        for i in range(self.num_resolutions):
+            self.sphharm_weights.append(
+                o3.spherical_harmonics(
+                    torch.arange(0, self.lmax_list[i] + 1).tolist(),
+                    self.sphere_points,
+                    False,
+                ).detach()
+            )
  
         
     def forward(self, data):
@@ -278,13 +299,10 @@ class eSCN(nn.Module):
                     self.SO3_edge_rot,
                     mappingReduced,
                 )
-            
-            #torch.save(x.embedding, f"embedding_layer_{i}.pt")
-            
+                        
         ###############################################################
-        # Predicts orbitals
+        # Predicts orbital charges
         ###############################################################
-        # N x "Cx0e + Cx1o + Cx2e + Cx3o + ..."
         
         x_emb_native = x.embedding[:, self.change_of_basis, :]
 
@@ -293,149 +311,52 @@ class eSCN(nn.Module):
         L_max = max(self.lmax_list)
         for l_val in range(L_max + 1):
             num_m_components = (2 * l_val) + 1
-            # Select the slice of x_emb_native for this l_val
-            # These are (N_atoms, num_m_components, S) if SO3_Embedding groups m's for an l consecutively
-            # It's more likely: x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
-            # This assumes that the (L_max+1)**2 dimension is ordered like:
-            # all m for L=0, then all m for L=1, etc.
-
             l_block_native = x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
-            #print(l_block_native.shape)
-            # l_block_native shape: (N_atoms, num_m_components_for_this_l, S_channels)
-
-            # We need to permute to (N_atoms, S_channels, num_m_components_for_this_l)
-            # so that m varies fastest for each channel.
             l_block_e3nn_ordered = l_block_native.permute(0, 2, 1).contiguous()
-            # Now shape: (N_atoms, S_channels, num_m_components_for_this_l)
-
             e3nn_input_parts.append(l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1))
             current_lm_idx += num_m_components
 
         x_pt_for_e3nn = torch.cat(e3nn_input_parts, dim=1)
-        coeffs = self.lin_out(x_pt_for_e3nn)
-        #coeffs = x_pt_for_e3nn[:, torch.tensor([0, 1, self.sphere_channels, self.sphere_channels+1, self.sphere_channels+2]).long()]
-
+        orbital_charges = self.lin_out(x_pt_for_e3nn)
         
-        #x_emb = x.embedding[:, self.change_of_basis, :]
-        #coeffs = x_emb.flatten(1,2)[:, self.coeff_idx]
+        # Sample the spherical channels (node embeddings) at evenly distributed points on the sphere.
+        # These values are fed into the output blocks.
+        x_pt_energy = torch.tensor([], device=device)
+        offset = 0
+        # Compute the embedding values at every sampled point on the sphere
+        for i in range(self.num_resolutions):
+            num_coefficients = int((x.lmax_list[i] + 1) ** 2)
+            x_pt_energy = torch.cat(
+                [
+                    x_pt_energy,
+                    torch.einsum(
+                        "abc, pb->apc",
+                        x_emb_native[:, offset : offset + num_coefficients],
+                        self.sphharm_weights[i],
+                    ).contiguous(),
+                ],
+                dim=2,
+            )
+            offset = offset + num_coefficients
 
-        expo_scaling = None
-        return coeffs, expo_scaling
-    
-    
-        # Initialize the edge rotation matrics
-    # def _init_edge_rot_mat(self, coords, edge_index, edge_distance_vec):
-    #     edge_vec_0 = edge_distance_vec
-    #     edge_vec_0_distance = torch.sqrt(torch.sum(edge_vec_0**2, dim=1))
-
-    #     # Make sure the atoms are far enough apart
-    #     if torch.min(edge_vec_0_distance) < 0.0001:
-    #         logging.error(
-    #             "Error edge_vec_0_distance: {}".format(
-    #                 torch.min(edge_vec_0_distance)
-    #             )
-    #         )
-    #         (minval, minidx) = torch.min(edge_vec_0_distance, 0)
-    #         logging.error(
-    #             "Error edge_vec_0_distance: {} {} {} {} {}".format(
-    #                 minidx,
-    #                 edge_index[0, minidx],
-    #                 edge_index[1, minidx],
-    #                 coords[edge_index[0, minidx]],
-    #                 coords[edge_index[1, minidx]],
-    #             )
-    #         )
-
-    #     norm_x = edge_vec_0 / (edge_vec_0_distance.view(-1, 1))
-
-    #     edge_vec_2 = torch.rand_like(edge_vec_0) - 0.5
-    #     edge_vec_2 = edge_vec_2 / (
-    #         torch.sqrt(torch.sum(edge_vec_2**2, dim=1)).view(-1, 1)
-    #     )
-    #     # Create two rotated copys of the random vectors in case the random vector is aligned with norm_x
-    #     # With two 90 degree rotated vectors, at least one should not be aligned with norm_x
-    #     edge_vec_2b = edge_vec_2.clone()
-    #     edge_vec_2b[:, 0] = -edge_vec_2[:, 1]
-    #     edge_vec_2b[:, 1] = edge_vec_2[:, 0]
-    #     edge_vec_2c = edge_vec_2.clone()
-    #     edge_vec_2c[:, 1] = -edge_vec_2[:, 2]
-    #     edge_vec_2c[:, 2] = edge_vec_2[:, 1]
-    #     vec_dot_b = torch.abs(torch.sum(edge_vec_2b * norm_x, dim=1)).view(
-    #         -1, 1
-    #     )
-    #     vec_dot_c = torch.abs(torch.sum(edge_vec_2c * norm_x, dim=1)).view(
-    #         -1, 1
-    #     )
-
-    #     vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1)).view(-1, 1)
-    #     edge_vec_2 = torch.where(
-    #         torch.gt(vec_dot, vec_dot_b), edge_vec_2b, edge_vec_2
-    #     )
-    #     vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1)).view(-1, 1)
-    #     edge_vec_2 = torch.where(
-    #         torch.gt(vec_dot, vec_dot_c), edge_vec_2c, edge_vec_2
-    #     )
-
-    #     vec_dot = torch.abs(torch.sum(edge_vec_2 * norm_x, dim=1))
-    #     # Check the vectors aren't aligned
-    #     assert torch.max(vec_dot) < 0.99
-
-    #     norm_z = torch.cross(norm_x, edge_vec_2, dim=1)
-    #     norm_z = norm_z / (
-    #         torch.sqrt(torch.sum(norm_z**2, dim=1, keepdim=True))
-    #     )
-    #     norm_z = norm_z / (
-    #         torch.sqrt(torch.sum(norm_z**2, dim=1)).view(-1, 1)
-    #     )
-    #     norm_y = torch.cross(norm_x, norm_z, dim=1)
-    #     norm_y = norm_y / (
-    #         torch.sqrt(torch.sum(norm_y**2, dim=1, keepdim=True))
-    #     )
-
-    #     # Construct the 3D rotation matrix
-    #     norm_x = norm_x.view(-1, 3, 1)
-    #     norm_y = -norm_y.view(-1, 3, 1)
-    #     norm_z = norm_z.view(-1, 3, 1)
-
-    #     edge_rot_mat_inv = torch.cat([norm_z, norm_x, norm_y], dim=2)
-    #     edge_rot_mat = torch.transpose(edge_rot_mat_inv, 1, 2)
+        x_pt_energy = x_pt_energy.view(-1, self.sphere_channels_all)
         
-    #     P = torch.tensor([[0.0, 1.0, 0.0],
-    #                       [0.0, 0.0, 1.0],
-    #                       [1.0, 0.0, 0.0]], device=edge_rot_mat.device, dtype=edge_rot_mat.dtype)
+        ###############################################################
+        # Energy prediction
+        ###############################################################
+        node_energy = self.energy_block(x_pt_energy)
+        energy = torch.zeros(len(data.n_atom), device=device)
+        energy.index_add_(0, data.batch, node_energy.view(-1))
         
-    #     edge_rot_mat = P @ edge_rot_mat @ P.T
-
-    #     return edge_rot_mat.detach()
+        ################################################################
+        # Atomic Charge prediction
+        ################################################################
+        node_charges = self.atomic_charge_block(x_pt_energy).flatten()
+        
+        return energy, orbital_charges, node_charges
     
-
-    # def plot_axes(self, axis_x, axis_y, axis_z, id="0"):
-    #         fig = plt.figure()
-    #         ax = fig.add_subplot(111, projection='3d')
-
-    #         # Plot origin
-    #         ax.scatter(0, 0, 0, color='black', label='Origin')
-
-    #         # Plot axis vectors
-            
-    #         ax.quiver(0, 0, 0, 1, 0, 0, color='k')
-    #         ax.quiver(0, 0, 0, 0, 1, 0, color='k')
-    #         ax.quiver(0, 0, 0, 0, 0, 1, color='k')
-            
-    #         ax.quiver(0, 0, 0, axis_x[0], axis_x[1], axis_x[2], color='red', label='X-axis')
-    #         ax.quiver(0, 0, 0, axis_y[0], axis_y[1], axis_y[2], color='green', label='Y-axis')
-    #         ax.quiver(0, 0, 0, axis_z[0], axis_z[1], axis_z[2], color='blue', label='Z-axis')
-
-    #         # Set labels
-    #         ax.set_xlabel('X')
-    #         ax.set_ylabel('Y')
-    #         ax.set_zlabel('Z')
-
-    #         ax.legend()
-    #         plt.savefig(f'axes_plot_original_{id}.png')
 
     # # Initialize the edge rotation matrics
-    
     def _init_edge_rot_mat(self, data, edge_index, edge_distance_vec):
         device = edge_distance_vec.device
         dtype = edge_distance_vec.dtype
@@ -446,10 +367,6 @@ class eSCN(nn.Module):
         
         # Normalized edge vector, this will be our local Z-axis
         axis_z = edge_distance_vec / (edge_lengths + norm_eps)
-        # Create a consistent X_local, Y_local
-        # Pick a reference vector not collinear with axis_z.
-        # Common choice: world Z-axis [0,0,1] or world X-axis [1,0,0].
-        # If edge is along world Z, pick world X, else pick world Z.
         world_z_torch = torch.tensor([0.0, 0.0, 1.0], device=device, dtype=dtype)
         world_x_torch = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype)
         P = torch.tensor([[0.0, 1.0, 0.0], 
@@ -462,9 +379,6 @@ class eSCN(nn.Module):
 
         dot_with_world_z = torch.sum(axis_z * world_z_vec, dim=1, keepdim=True)
 
-        # If axis_z is (anti)parallel to world_z, use world_x as reference
-        # otherwise, use world_z as reference to cross with axis_z to get axis_y
-        # (This order makes axis_y = normalize(world_ref x axis_z))
         ref_vec_for_y = torch.where(
             torch.abs(dot_with_world_z) >= (1.0 - norm_eps), # If aligned with world_z
             world_x_vec, # Use world_x
@@ -955,3 +869,76 @@ class EdgeBlock(torch.nn.Module):
         x_edge = self.act(self.fc1_edge_attr(x_edge))
 
         return x_edge
+    
+
+class EnergyBlock(torch.nn.Module):
+    """
+    Energy Block: Output block computing the energy
+
+    Args:
+        num_channels (int):         Number of channels
+        num_sphere_samples (int):   Number of samples used to approximate the integral on the sphere
+        act (function):             Non-linear activation function
+    """
+
+    def __init__(
+        self,
+        num_channels,
+        num_sphere_samples,
+        act,
+    ):
+        super(EnergyBlock, self).__init__()
+        self.num_channels = num_channels
+        self.num_sphere_samples = num_sphere_samples
+        self.act = act
+
+        self.fc1 = nn.Linear(self.num_channels, self.num_channels)
+        self.fc2 = nn.Linear(self.num_channels, self.num_channels)
+        self.fc3 = nn.Linear(self.num_channels, 1, bias=False)
+
+    def forward(self, x_pt):
+        # x_pt are the values of the channels sampled at different points on the sphere
+        x_pt = self.act(self.fc1(x_pt))
+        x_pt = self.act(self.fc2(x_pt))
+        x_pt = self.fc3(x_pt)
+        x_pt = x_pt.view(-1, self.num_sphere_samples, 1)
+        node_energy = torch.sum(x_pt, dim=1) / self.num_sphere_samples
+
+        return node_energy
+
+
+class AtomicChargeBlock(torch.nn.Module):
+    """
+    Atomic Charge Block: Output block computing the atomic charges
+
+    Args:
+        num_channels (int):         Number of channels
+        num_sphere_samples (int):   Number of samples used to approximate the integral on the sphere
+        act (function):             Non-linear activation function
+    """
+
+    def __init__(
+        self,
+        num_channels,
+        num_sphere_samples,
+        act,
+    ):
+        super(AtomicChargeBlock, self).__init__()
+        self.num_channels = num_channels
+        self.num_sphere_samples = num_sphere_samples
+        self.act = act
+
+        self.fc1 = nn.Linear(self.num_channels, self.num_channels)
+        self.fc2 = nn.Linear(self.num_channels, self.num_channels)
+        self.fc3 = nn.Linear(self.num_channels, 1, bias=False)
+
+    def forward(self, x_pt):
+        # x_pt are the values of the channels sampled at different points on the sphere
+        x_pt = self.act(self.fc1(x_pt))
+        x_pt = self.act(self.fc2(x_pt))
+        x_pt = self.fc3(x_pt)
+        x_pt = x_pt.view(-1, self.num_sphere_samples, 1)
+        # Average over the sphere samples to get the scalar charge per atom
+        node_charge = torch.sum(x_pt, dim=1) / self.num_sphere_samples
+
+        return node_charge
