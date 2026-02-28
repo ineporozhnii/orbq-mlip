@@ -1,14 +1,10 @@
 # metadata specialised for each experiment
 core:
-  expname: tmQM_NscfOOD_metadata_debug
-  project_name: mlguess
+  expname: OMol25_neutral_metal_Energy_MSE
+  project_name: augmentq
   storage_dir: ${core.expname}
   version: 0.0.1
   tags: null
-
-conventions:
-  x_key: 'x'
-  y_key: 'y'
 
 hydra:
   run:
@@ -31,9 +27,7 @@ hydra:
     - override hydra_logging: none
 
 defaults:
-  - data: tmqm
-  - model: tmqm
+  - data: omol
+  - model: omol
   - train: default
   - _self_ # as last argument to allow the override of parameters via this main config
-#    Decomment this parameter to get parallel job running
-#  - hydra/launcher: joblib
