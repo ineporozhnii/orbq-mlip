@@ -1,7 +1,9 @@
 _target_: mlguess.model.module.EnergyChargesLightningModule
 
-criterion: mse
+criterion: mae
 target_property: 'energy'
+energy_loss_weight: 1.0
+charges_loss_weight: 0.0
 charges_type: 'none' # orbital_dxtb, atomic_dxtb, atomic_mulliken, atomic_lowdin, none
 pbc: false
 dft_basis_set: 'gfn1'
