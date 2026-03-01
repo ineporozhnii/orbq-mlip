@@ -1,5 +1,6 @@
 import torch 
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from bisect import bisect
 from lightning.pytorch.callbacks import Callback
@@ -229,21 +230,3 @@ class UncertaintyWeightedLoss(nn.Module):
         weighted_loss_q = 0.5 * precision_q * loss_q + 0.5 * self.log_var_q
 
         return weighted_loss_e + weighted_loss_q
-    
-
-class UncertaintyWeightedMAELoss(nn.Module):
-    def __init__(self):
-        super(UncertaintyWeightedMAELoss, self).__init__()
-        self.log_scale_e = nn.Parameter(torch.zeros(1))
-        self.log_scale_q = nn.Parameter(torch.zeros(1))
-
-    def forward(self, loss_e, loss_q):
-        total_loss = 0.0
-
-        precision_e = torch.exp(-self.log_scale_e)
-        precision_q = torch.exp(-self.log_scale_q)
-        
-        total_loss = total_loss + (precision_e * loss_e + self.log_scale_e)
-        total_loss = total_loss + (precision_q * loss_q + self.log_scale_q)
-
-        return total_loss

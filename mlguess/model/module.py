@@ -4,7 +4,6 @@ from hydra.utils import instantiate
 from torch_ema import ExponentialMovingAverage
 
 from mlguess.common.utils import scatter
-from mlguess.model.utils import UncertaintyWeightedLoss, UncertaintyWeightedMAELoss
 from mlguess.model.basis_set import get_basis_set, transform_basis_set
 from mlguess.model.gtos import GTOs
 
@@ -27,9 +26,6 @@ class EnergyChargesLightningModule(LightningModule):
 
         if self.hparams.train.get("freeze_backbone", False):
             self.freeze_backbone()
-        
-        if self.hparams.target_property == 'combined':
-            self.loss_fn = UncertaintyWeightedLoss() if self.hparams.criterion == 'mse' else UncertaintyWeightedMAELoss()
         
         self.ema = ExponentialMovingAverage(
             self.parameters(), decay=self.hparams.train.ema.decay
@@ -131,11 +127,13 @@ class EnergyChargesLightningModule(LightningModule):
             if self.hparams.criterion == 'mse':
                 loss_energy = (pred_energy / self.scale_energy - target_energy / self.scale_energy).pow(2).mean()
                 loss_charges = (pred_charges / scale_charges - target_charges / scale_charges).pow(2).mean()
-                loss = self.loss_fn(loss_energy, loss_charges)
-            else:
+                loss = self.hparams.energy_loss_weight * loss_energy + self.hparams.charges_loss_weight * loss_charges
+            elif self.hparams.criterion == 'mae':
                 loss_energy = (pred_energy / self.scale_energy - target_energy / self.scale_energy).abs().mean()
                 loss_charges = (pred_charges / scale_charges - target_charges / scale_charges).abs().mean()
-                loss = self.loss_fn(loss_energy, loss_charges)
+                loss = self.hparams.energy_loss_weight * loss_energy + self.hparams.charges_loss_weight * loss_charges
+            else:
+                raise ValueError(f"Unsupported criterion: {self.hparams.criterion}")
         else:
             if self.hparams.target_property == 'energy':
                 scale = self.scale_energy
