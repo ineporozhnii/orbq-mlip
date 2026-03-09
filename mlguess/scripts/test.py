@@ -120,6 +120,9 @@ def main(
             elif model.hparams.charges_type == 'atomic_mulliken':
                 target_charges = batch.atomic_charges_mulliken
                 pred_charges = atomic_charges
+            else:
+                target_charges = torch.zeros_like(batch.atom_types)
+                pred_charges = torch.zeros_like(batch.atom_types)
                 
             n_atom.extend(batch["n_atom"].detach().cpu())
             atom_types.extend(batch["atom_types"].detach().cpu())
@@ -135,12 +138,12 @@ def main(
         
         n_atom = torch.tensor(n_atom)
         atom_types = torch.tensor(atom_types)
-        coords = torch.tensor(coords)
         predictions_energy = torch.tensor(predictions_energy)
-        predictions_charges = torch.tensor(predictions_charges)
         ground_truth_energy = torch.tensor(ground_truth_energy)
+        coords = torch.cat(coords)
+        predictions_charges = torch.tensor(predictions_charges)
         ground_truth_charges = torch.tensor(ground_truth_charges)
-        save_path = Path(data_path) / f"{tag}_results.pt"
+        save_path = storage_dir / f"{tag}_{model.hparams.charges_type}_results.pt"
         torch.save(
             {
                 "n_atom": n_atom,
