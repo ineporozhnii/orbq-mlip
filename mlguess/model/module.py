@@ -97,7 +97,7 @@ class EnergyChargesLightningModule(LightningModule):
         return corrected_charges.flatten()[mask]
     
     def forward(self, batch):
-        energy, orbital_charges, atomic_charges = self.model(batch)
+        energy, orbital_charges, atomic_charges, _ = self.model(batch)
         
         pred_energy = energy * self.scale_energy
         target_energy = batch.energy

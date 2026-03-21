@@ -29,15 +29,19 @@ def main(
     max_n_graphs=10000,
     batch_size=4,
     use_last=False,
+    run_name=None,
+    save_emb=False,
     ):
     seed_everything(42)
     ckpt_path = Path(ckpt_path)
+    
+    log_name = f'eval_{tag}.log' if run_name is None else f'eval_{tag}_{run_name}.log'
     
     # Configure logging
     logging.basicConfig(level=logging.DEBUG,
                 format='%(asctime)s - %(levelname)s - %(message)s',
                 datefmt='%m/%d/%Y %I:%M:%S %p',
-                filename=ckpt_path / f'eval_{tag}.log',
+                filename=ckpt_path / log_name,
                 filemode='w')
         
     cfg = omegaconf.OmegaConf.load(ckpt_path / "config.yaml")
@@ -79,9 +83,11 @@ def main(
     
     # Better load balancing possible.
     pylogger.info("starting testing.")    
+    txt_name = f'nmape_{tag}.txt' if run_name is None else f'nmape_{tag}_{run_name}.txt'
+
     with(torch.no_grad(),
          contextlib.ExitStack() as context_stack, 
-         open(storage_dir / f'nmape_{tag}.txt', 'w') as f
+         open(storage_dir / txt_name, 'w') as f
         ):
                 
         prog = context_stack.enter_context(tqdm(total=min(max_n_graphs, len(test_dataset)), disable=None))
@@ -104,9 +110,10 @@ def main(
         predictions_charges = []
         ground_truth_energy = []
         ground_truth_charges = []
+        atomic_embeddings = []
         for batch in test_loader:
             batch = batch.to('cuda')
-            energy, orbital_charges, atomic_charges = model.model(batch)
+            energy, orbital_charges, atomic_charges, atomic_emb = model.model(batch)
             
             if model.hparams.charges_type == 'orbital_dxtb':
                 target_charges = batch.orbital_charges_dxtb
@@ -131,6 +138,8 @@ def main(
             predictions_charges.extend((pred_charges).detach().cpu())
             ground_truth_energy.extend(batch.energy.detach().cpu())
             ground_truth_charges.extend(target_charges.detach().cpu())
+            if save_emb:
+                atomic_embeddings.extend(atomic_emb.detach().cpu())
             metadata_list.extend(batch.metadata)
             prog.update(batch["n_atom"].shape[0])        
         elapsed_time = time.time() - curr_time
@@ -143,9 +152,13 @@ def main(
         coords = torch.cat(coords)
         predictions_charges = torch.tensor(predictions_charges)
         ground_truth_charges = torch.tensor(ground_truth_charges)
-        save_path = storage_dir / f"{tag}_{model.hparams.charges_type}_results.pt"
-        torch.save(
-            {
+        
+        base_name = f"{tag}_{model.hparams.charges_type}_results"
+        if run_name is not None:
+             base_name = f"{base_name}_{run_name}"
+        save_path = storage_dir / f"{base_name}.pt"
+
+        save_dict = {
                 "n_atom": n_atom,
                 "atom_types": atom_types,
                 "coords": coords,
@@ -154,9 +167,11 @@ def main(
                 "ground_truth_energy": ground_truth_energy,
                 "ground_truth_charges": ground_truth_charges,
                 "metadata": metadata_list,
-            },
-            save_path
-        )
+        }
+        if save_emb:
+            save_dict["atomic_emb"] = torch.stack(atomic_embeddings) if atomic_embeddings else torch.tensor([])
+
+        torch.save(save_dict, save_path)
         
 
 if __name__ == "__main__":
@@ -199,6 +214,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Use the last checkpoint.",
     )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Test run name.",
+    )
+    parser.add_argument(
+        "--save_emb",
+        action="store_true",
+        help="Save atomic embeddings.",
+    )
     args: argparse.Namespace = parser.parse_args()
     main(args.ckpt_path, args.data_path, args.split_file, args.tag, 
-         args.max_n_graphs, args.batch_size, args.use_last)
+         args.max_n_graphs, args.batch_size, args.use_last, args.name, args.save_emb)

@@ -194,6 +194,8 @@ class eSCN(nn.Module):
             self.sphere_channels_all, self.num_sphere_samples, self.act
         )
         
+        # self.atomic_charge_lin = o3.Linear(irreps_in=irreps_in, irreps_out="1x0e")
+        
         # Create a roughly evenly distributed point sampling of the sphere for the output blocks
         self.sphere_points = CalcSpherePoints(
             self.num_sphere_samples, self.device
@@ -305,6 +307,7 @@ class eSCN(nn.Module):
         ###############################################################
         
         x_emb_native = x.embedding[:, self.change_of_basis, :]
+        node_emb = x_emb_native[:, 0, :]
 
         e3nn_input_parts = []
         current_lm_idx = 0
@@ -352,8 +355,9 @@ class eSCN(nn.Module):
         # Atomic Charge prediction
         ################################################################
         node_charges = self.atomic_charge_block(x_pt_energy).flatten()
+        # node_charges = self.atomic_charge_lin(x_pt_for_e3nn).flatten()
         
-        return energy, orbital_charges, node_charges
+        return energy, orbital_charges, node_charges, node_emb
     
 
     # # Initialize the edge rotation matrics
