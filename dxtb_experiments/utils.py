@@ -101,7 +101,7 @@ def calculate_dxtb(args: tuple):
         float: Final calculated energy
     """
     
-    npz_path, molecule_id, save_dir, scp_mode, initial_charges = args
+    npz_path, molecule_id, save_dir, scp_mode, ml_guess = args
     data = np.load(npz_path)
     numbers = data["atomic_numbers"]
     positions = data["positions"] * AA2AU  # Convert Angstroms to atomic units
@@ -109,7 +109,11 @@ def calculate_dxtb(args: tuple):
     # Clone and convert input tensors to appropriate types
     numbers = torch.tensor(numbers).detach().to(torch.int64)
     positions = torch.tensor(positions).detach().to(torch.double).requires_grad_(True)
-    initial_charges = torch.tensor(initial_charges).detach().to(torch.double) if initial_charges is not None else None
+    if ml_guess:
+        initial_charges = data["predicted_orbital_charges"]
+        initial_charges = torch.tensor(initial_charges).detach().to(torch.double)
+    else:
+        initial_charges = None
 
     # Set up calculator configuration
     calc_config = {

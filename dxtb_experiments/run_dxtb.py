@@ -17,20 +17,16 @@ def main():
     scp_mode = int(sys.argv[1])
     dir_path = str(sys.argv[2])
     save_dir = str(sys.argv[3])
-    init_guess_file = str(sys.argv[4])
+    ml_guess = str(sys.argv[4])
+    # Interpret ml_guess as a binary flag (0/1 or true/false). Optional 5th arg can supply an init guess file path.
+    try:
+        ml_guess = bool(int(ml_guess))
+    except Exception:
+        ml_guess = str(ml_guess).lower() in ("1", "true", "t", "yes", "y")
     n_processes = multiprocessing.cpu_count()
     
     assert os.path.exists(dir_path), f"Data directory {dir_path} does not exist!"
     assert os.path.exists(save_dir), f"Save directory {save_dir} does not exist!"
-    
-    if init_guess_file:
-        assert os.path.exists(init_guess_file), f"!!! Init guess file {init_guess_file} does not exist !!!"
-        init_guess = np.load(init_guess_file)
-        print("")
-        print(f"Using guess file: {init_guess_file}")
-        print("")
-    else:
-        init_charges = None
     
     ftype = "npz"
     filename = None
@@ -57,7 +53,7 @@ def main():
             npz_files = list(Path(dir_path).glob("*.npz"))
             npz_files = [npz_path for npz_path in npz_files if not os.path.exists(f"{save_dir}/{os.path.basename(npz_path).split('.')[0]}_dxtb_result.npz")]
             molecule_ids = [os.path.basename(npz_path).split(".")[0] for npz_path in npz_files]
-            args_list = [(str(npz_path), molecule_id, save_dir, scp_mode, None) for (npz_path, molecule_id) in zip(npz_files, molecule_ids)]
+            args_list = [(str(npz_path), molecule_id, save_dir, scp_mode, ml_guess) for (npz_path, molecule_id) in zip(npz_files, molecule_ids)]
    
             print(f"Running parallel calculations with {n_processes} processes...")
             print(args_list[0])
