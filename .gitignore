@@ -179,3 +179,4 @@ results*/
 notebooks/
 wandb/
 runs/
+data/

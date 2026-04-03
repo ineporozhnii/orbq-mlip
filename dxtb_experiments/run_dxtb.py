@@ -6,87 +6,66 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
+import sys
+import multiprocessing
+from pathlib import Path
+
+import torch
 import numpy as np
 from tqdm import tqdm
-from pathlib import Path
-from utils import load_xyz, work_lmdb, calculate_dxtb 
-import multiprocessing
-import sys
+
+from utils import calculate_dxtb 
+
+def worker_init():
+    # Ensure each worker uses exactly 1 thread for PyTorch operations
+    torch.set_num_threads(1)
 
 def main():
-    scp_mode = int(sys.argv[1])
-    dir_path = str(sys.argv[2])
-    save_dir = str(sys.argv[3])
-    ml_guess = str(sys.argv[4])
-    # Interpret ml_guess as a binary flag (0/1 or true/false). Optional 5th arg can supply an init guess file path.
+    # Use spawn for PyTorch multiprocess safety
     try:
-        ml_guess = bool(int(ml_guess))
-    except Exception:
-        ml_guess = str(ml_guess).lower() in ("1", "true", "t", "yes", "y")
-    n_processes = multiprocessing.cpu_count()
+        multiprocessing.set_start_method('spawn')
+    except RuntimeError:
+        pass
     
-    assert os.path.exists(dir_path), f"Data directory {dir_path} does not exist!"
-    assert os.path.exists(save_dir), f"Save directory {save_dir} does not exist!"
+    if len(sys.argv) < 4:
+        print("Usage: python run_dxtb.py <scp_mode> <dir_path> <save_dir>")
+        sys.exit(1)
+
+    scp_mode = int(sys.argv[1])
+    dir_path = Path(sys.argv[2])
+    save_dir = Path(sys.argv[3])
+    n_processes = min(190, multiprocessing.cpu_count())
     
-    ftype = "npz"
-    filename = None
-    lmbd_path = None
-    #filename = "all_molecules.lmdb"
-    #filename = "tmqm_delta_e_neutral_ref_cor_70_test.lmdb"  # Replace with your file path
-    #filename = "/home/ihor/projects/MLGuessQC/data/JAXREF.xyz"
+    assert dir_path.exists(), f"Data directory {dir_path} does not exist!"
+    assert save_dir.exists(), f"Save directory {save_dir} does not exist!"
     
-    # If directory is provided
-    if dir_path is not None:
-        if ftype == "xyz":
-            xyz_files = list(Path(dir_path).glob("*.xyz"))
-            for xyz_path in tqdm(xyz_files):
-                molecule_id = os.path.basename(xyz_path).split(".")[0]
-                if os.path.exists(f"{save_dir}/{molecule_id}_dxtb_result.npz"):
-                    continue
-                else:
-                    try:
-                        numbers, positions = load_xyz(str(xyz_path))
-                        calculate_dxtb(numbers, positions, molecule_id, save_dir)
-                    except Exception as e:
-                        print(f"Error processing {xyz_path}: {e}")
-        elif ftype == "npz":
-            npz_files = list(Path(dir_path).glob("*.npz"))
-            npz_files = [npz_path for npz_path in npz_files if not os.path.exists(f"{save_dir}/{os.path.basename(npz_path).split('.')[0]}_dxtb_result.npz")]
-            molecule_ids = [os.path.basename(npz_path).split(".")[0] for npz_path in npz_files]
-            args_list = [(str(npz_path), molecule_id, save_dir, scp_mode, ml_guess) for (npz_path, molecule_id) in zip(npz_files, molecule_ids)]
-   
-            print(f"Running parallel calculations with {n_processes} processes...")
-            print(args_list[0])
-            with multiprocessing.Pool(n_processes) as pool:
-                results = list(tqdm(pool.imap(calculate_dxtb, args_list), total=len(args_list)))            
-            
+    ftype = "pt"
     
-    # If xyz file is provided
-    if filename is not None:
-        assert filename.endswith(".xyz"), "File must be an XYZ file."
-        assert os.path.exists(filename), f"File {filename} does not exist!"
-        molecule_id = os.path.basename(filename).split(".")[0]
-        try:
-            numbers, positions = load_xyz(filename)
-            calculate_dxtb(numbers, positions, molecule_id, save_dir)
-        except Exception as e:
-            print(f"Error processing {filename}: {e}")
+    args_list = []
     
-    # If LMDB file is provided              
-    if lmbd_path is not None:
-        dataset = work_lmdb(lmbd_path, filename)
-        for i in tqdm(len(dataset)):
-            molecule = dataset[i]
-            molecule_id = molecule.cid
-            numbers = molecule["atomic_numbers"]
-            positions = molecule["pos"]
-            if os.path.exists(f"{save_dir}/{molecule_id}_dxtb_result.npz"):
-                continue
-            else:
-                try:
-                    calculate_dxtb(numbers, positions, molecule_id, save_dir)
-                except Exception as e:
-                    print(f"Error processing {molecule_id}: {e}")
+    # Collect files and filter out already processed ones
+    for file_path in dir_path.glob(f"*.{ftype}"):
+        molecule_id = file_path.stem  # Gets the filename without extension
+        expected_output = save_dir / f"{molecule_id}_dxtb_result.pt"
+        
+        if not expected_output.exists():
+            args_list.append((str(file_path), molecule_id, str(save_dir), scp_mode))
+
+    if not args_list:
+        print("No files left to process.")
+        return
+
+    print(f"Running parallel calculations with {n_processes} processes...")
+    print(f"Sample arguments: {args_list[0]}")
+    
+    # Calculate an optimal chunksize - cap it to ensure progress bar updates frequently
+    chunksize = min(100, max(1, len(args_list) // (n_processes * 4)))
+
+    # Using imap_unordered for better performance when order doesn't matter
+    with multiprocessing.Pool(n_processes, initializer=worker_init) as pool:
+        with tqdm(total=len(args_list)) as pbar:
+            for _ in pool.imap_unordered(calculate_dxtb, args_list, chunksize=chunksize):
+                pbar.update(1)
     
 if __name__ == "__main__":
     main()

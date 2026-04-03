@@ -92,84 +92,61 @@ def calculate_dxtb(args: tuple):
     Calculate dxTB single point energy and save results.
     
     Args:
-        numbers: Atomic numbers of atoms in the molecule
-        positions: Cartesian coordinates of atoms
-        molecule_id: Unique identifier for the molecule
-        save_dir: Directory where results will be saved
+        args: Tuple containing (pt_path, molecule_id, save_dir, scp_mode)
     
     Returns:
         float: Final calculated energy
     """
     
-    npz_path, molecule_id, save_dir, scp_mode, ml_guess = args
-    data = np.load(npz_path)
-    numbers = data["atomic_numbers"]
-    positions = data["positions"] * AA2AU  # Convert Angstroms to atomic units
-            
-    # Clone and convert input tensors to appropriate types
-    numbers = torch.tensor(numbers).detach().to(torch.int64)
-    positions = torch.tensor(positions).detach().to(torch.double).requires_grad_(True)
-    if ml_guess:
-        initial_charges = data["predicted_orbital_charges"]
-        initial_charges = torch.tensor(initial_charges).detach().to(torch.double)
-    else:
-        initial_charges = None
-
+    pt_path, molecule_id, save_dir, scp_mode = args
+    
+    # Efficiently load pt file without initializing heavy CUDA contexts
+    data = torch.load(pt_path, map_location="cpu")
+    
+    # Extract atomic numbers and coordinates
+    numbers = data["atom_types"].detach().to(torch.int64)
+    positions = data["coords"].detach().to(torch.double) * AA2AU  # Convert Angstroms to atomic units
+    positions.requires_grad_(True)
+    
     # Set up calculator configuration
     calc_config = {
         "dtype": torch.double,
         "device": torch.device("cpu"),
-        "opts": {"verbosity": 3, "maxiter": 500, 'scp_mode': scp_mode, "damp": 0.5, 'scf_mode': dxtb.labels.SCF_MODE_FULL, "cache_charges": False, "cache_iterations": False} # 'scp_mode' (0 for Fock, 1 for potential, 2 for charges)
+        "opts": {"verbosity": 0, "maxiter": 250, 'scp_mode': scp_mode, "cache_charges": False, "cache_iterations": False}
     }
     
     # Initialize GFN1 calculator
     calc = dxtb.calculators.GFN1Calculator(numbers, **calc_config)
     
-    if initial_charges is not None:
-        initial_charges = escn_to_dxtb_orbitals(
-            sorted_property_tensor=initial_charges,
-            angular_momentum_per_shell=calc.ihelp.angular,
-            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
-            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
-        )
-    
     # Measure calculation time
     start = time.time()
     try:
-        result = calc.singlepoint(positions, initial_charges=initial_charges)
+        result = calc.singlepoint(positions)
     except Exception as e:
         print(f"Error in calculation for molecule {molecule_id}: {e}")
         return None
     calc_time = time.time() - start
     
     # Extract and convert results
-    n_scf_iter = np.array([result.iter])
-    calc_time = np.array([calc_time])
-    final_charges = result.charges.mono.detach().numpy()
-    final_potential = result.potential.mono.cpu().detach().numpy()
-    final_emo = result.emo.detach().numpy()
-    final_energy = result.total.detach().numpy()
-    qdiff = result.qdiff.detach().numpy() if hasattr(result, 'qdiff') else np.array([-1.0])
-    ediff = result.ediff.detach().numpy() if hasattr(result, 'ediff') else np.array([-1.0])
-    pnorm = result.pnorm.detach().numpy() if hasattr(result, 'pnorm') else np.array([-1.0])
+    n_scf_iter = torch.tensor([result.iter])
+    calc_time_tensor = torch.tensor([calc_time])
+    final_charges = result.charges.mono.detach().cpu()
+    final_potential = result.potential.mono.detach().cpu()
+    final_emo = result.emo.detach().cpu()
+    final_energy = result.total.detach().cpu()
     
-    # Save all results to a compressed NumPy file
-    np.savez(
-        f"{save_dir}/{molecule_id}_dxtb_result",
-        numbers=numbers.detach().cpu().numpy(),
-        coord=positions.detach().cpu().numpy(),
-        final_charges=final_charges,
-        final_potential=final_potential,
-        final_emo=final_emo,
-        final_energy=final_energy,
-        n_scf_iter=n_scf_iter,
-        calc_time=calc_time,
-        qdiff=qdiff,
-        ediff=ediff,
-        pnorm=pnorm
-    )
+    # Update the original data dictionary with dxtb results
+    data["dxtb_charges"] = final_charges
+    data["dxtb_potential"] = final_potential
+    data["dxtb_emo"] = final_emo
+    data["dxtb_energy"] = final_energy
+    data["dxtb_n_scf_iter"] = n_scf_iter
+    data["dxtb_calc_time"] = calc_time_tensor
     
-    return final_energy
+    # Save all results to a pytorch file
+    torch.save(data, f"{save_dir}/{molecule_id}_dxtb_result.pt")
+    
+    return final_energy.sum().item()
 
 
 
