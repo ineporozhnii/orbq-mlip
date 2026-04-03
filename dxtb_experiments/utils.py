@@ -130,13 +130,15 @@ def calculate_dxtb(args: tuple):
     # Extract and convert results
     n_scf_iter = torch.tensor([result.iter])
     calc_time_tensor = torch.tensor([calc_time])
-    final_charges = result.charges.mono.detach().cpu()
     final_potential = result.potential.mono.detach().cpu()
     final_emo = result.emo.detach().cpu()
     final_energy = result.total.detach().cpu()
+    orbital_charges = result.charges.mono.detach().cpu()
+    atomic_charges = calc.ihelp.reduce_orbital_to_atom(result.charges.mono).detach().cpu()
     
     # Update the original data dictionary with dxtb results
-    data["dxtb_charges"] = final_charges
+    data["dxtb_charges_orbital"] = orbital_charges
+    data["dxtb_charges_atomic"] = atomic_charges
     data["dxtb_potential"] = final_potential
     data["dxtb_emo"] = final_emo
     data["dxtb_energy"] = final_energy
