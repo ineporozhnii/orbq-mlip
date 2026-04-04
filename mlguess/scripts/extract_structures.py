@@ -13,6 +13,9 @@ def worker_init(data_path):
 
 def worker_process(args):
     dataset_idx, save_path, target_data_id, target_charge, target_spin = args
+    file_path = os.path.join(save_path, f"{target_data_id}_{dataset_idx:08d}.pt")
+    if os.path.exists(file_path):
+        return False  # Skip if file already exists
     atoms = _dataset.get_atoms(dataset_idx)
     
     # Filter conditions
@@ -39,7 +42,6 @@ def worker_process(args):
     }
     
     # Save to pt file using the dataset index
-    file_path = os.path.join(save_path, f"{target_data_id}_{dataset_idx:08d}.pt")
     torch.save(data_dict, file_path)
     
     return True
@@ -89,7 +91,7 @@ if __name__ == "__main__":
     # Train set: 450k neutral metal complexes
     DATA_PATH = '../../data/OMol25/train'
     SAVE_PATH = '../../data/OMol25_metal_neutral'
-    N_MAX = 500_000
+    N_MAX = 200_000
     
     process_and_save_dataset(
         data_path=DATA_PATH,
