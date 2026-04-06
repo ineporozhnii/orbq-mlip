@@ -100,9 +100,13 @@ def calculate_dxtb(args: tuple):
     
     pt_path, molecule_id, save_dir, scp_mode = args
     
-    # Efficiently load pt file without initializing heavy CUDA contexts
-    data = torch.load(pt_path, map_location="cpu")
-    
+    # Load pt file
+    try:
+        data = torch.load(pt_path, map_location="cpu", weights_only=False)
+    except EOFError:
+        print(f"Error (corrupted file): Could not load {pt_path}")
+        return None
+        
     # Extract atomic numbers and coordinates
     numbers = data["atom_types"].detach().to(torch.int64)
     positions = data["coords"].detach().to(torch.double) * AA2AU  # Convert Angstroms to atomic units
