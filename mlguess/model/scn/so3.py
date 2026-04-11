@@ -431,9 +431,6 @@ class SO3_Rotation(torch.nn.Module):
 
         self.wigner = self.RotationToWignerDMatrix(rot_mat3x3, 0, lmax)
         self.wigner_inv = torch.transpose(self.wigner, 1, 2).contiguous()
-    
-        self.wigner = torch.abs(self.wigner) ** 2
-        self.wigner_inv = torch.abs(self.wigner_inv) ** 2
 
         self.wigner = self.wigner.detach()
         self.wigner_inv = self.wigner_inv.detach()

@@ -31,6 +31,7 @@ from mlguess.model.scn.smearing import (
 from mlguess.model.scn.sampling import CalcSpherePoints
 
 from e3nn import o3
+from e3nn.o3 import ReducedTensorProducts, Irrep, Irreps, Linear, FullyConnectedTensorProduct
 
 class eSCN(nn.Module):
     """Equivariant Spherical Channel Network
@@ -182,9 +183,9 @@ class eSCN(nn.Module):
         
         # Output linear layer using e3nn.o3.Linear
         irreps_in = f"{self.sphere_channels}x0e + {self.sphere_channels}x1o + {self.sphere_channels}x2e"
-        irreps_out = "2x0e + 1x1o + 1x2e"
-        # irreps_out = "2x0e + 3x0e + 5x0e" # invariant output
-        self.lin_out = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out)
+        # Determine if we need d-orbitals based on your basis sizing
+        max_orbital = 'd' if max(self.lmax_list) >= 2 else 'p'
+        self.lin_out = EquivariantPopulationPredictor(irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L)
         
         self.energy_block = EnergyBlock(
             self.sphere_channels_all, self.num_sphere_samples, self.act
@@ -360,7 +361,7 @@ class eSCN(nn.Module):
         return energy, orbital_charges, node_charges, node_emb
     
 
-    # # Initialize the edge rotation matrics
+    # Initialize the edge rotation matrices
     def _init_edge_rot_mat(self, data, edge_index, edge_distance_vec):
         device = edge_distance_vec.device
         dtype = edge_distance_vec.dtype
@@ -373,9 +374,6 @@ class eSCN(nn.Module):
         axis_z = edge_distance_vec / (edge_lengths + norm_eps)
         world_z_torch = torch.tensor([0.0, 0.0, 1.0], device=device, dtype=dtype)
         world_x_torch = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype)
-        P = torch.tensor([[0.0, 1.0, 0.0], 
-                          [0.0, 0.0, 1.0], 
-                          [1.0, 0.0, 0.0]], device=device, dtype=dtype, requires_grad=False)
         
         # Expand world vectors to match batch size of axis_z
         world_z_vec = world_z_torch.expand_as(axis_z)
@@ -397,8 +395,8 @@ class eSCN(nn.Module):
         # Columns of edge_rot_mat_inv are axis_x, axis_y, axis_z
         edge_rot_mat_inv = torch.stack([axis_x, axis_y, axis_z], dim=2)
         edge_rot_mat = torch.transpose(edge_rot_mat_inv, 1, 2).contiguous()
-        edge_rot_mat = P @ edge_rot_mat @ P.T
         
+        # RETURN DIRECTLY - Do not permute the geometric coordinate frame
         return edge_rot_mat.detach()
 
     @property
@@ -946,3 +944,74 @@ class AtomicChargeBlock(torch.nn.Module):
         node_charge = torch.sum(x_pt, dim=1) / self.num_sphere_samples
 
         return node_charge
+    
+
+
+class EquivariantPopulationPredictor(nn.Module):
+    def __init__(self, irreps_in, max_n_orbitals_per_L):
+        super().__init__()
+        self.irreps_in = Irreps(irreps_in)
+        
+        # Extract the maximum number of shells per angular momentum L across all atoms
+        self.n_s = int(max_n_orbitals_per_L[0]) if len(max_n_orbitals_per_L) > 0 else 0
+        self.n_p = int(max_n_orbitals_per_L[1]) if len(max_n_orbitals_per_L) > 1 else 0
+        self.n_d = int(max_n_orbitals_per_L[2]) if len(max_n_orbitals_per_L) > 2 else 0
+        
+        # 1. Predict all s-orbital populations (n_s scalars)
+        if self.n_s > 0:
+            self.predict_s = Linear(self.irreps_in, f"{self.n_s}x0e")
+        
+        # 2. Predict all p-shell tensors (symmetric 3x3 matrices)
+        if self.n_p > 0:
+            self.rtp_p = ReducedTensorProducts('ij=ji', i='1o')
+            self.predict_p = nn.ModuleList([
+                Linear(self.irreps_in, self.rtp_p.irreps_out) for _ in range(self.n_p)
+            ])
+        
+        # 3. Predict all d-shell tensors (symmetric 5x5 matrices)
+        if self.n_d > 0:
+            self.rtp_d = ReducedTensorProducts('ij=ji', i='2e')
+            
+            l_max_in = max([l for _, (l, p) in self.irreps_in])
+            self.needs_tp = (l_max_in < 4)
+            
+            self.predict_d = nn.ModuleList()
+            if self.needs_tp:
+                bottleneck = "16x0e + 16x1o + 16x2e"
+                self.proj_down = Linear(self.irreps_in, bottleneck)
+                for _ in range(self.n_d):
+                    self.predict_d.append(FullyConnectedTensorProduct(bottleneck, bottleneck, self.rtp_d.irreps_out))
+            else:
+                for _ in range(self.n_d):
+                    self.predict_d.append(Linear(self.irreps_in, self.rtp_d.irreps_out))
+
+    def forward(self, x):
+        outputs = []
+        
+        # Compute s-orbitals
+        if self.n_s > 0:
+            outputs.append(self.predict_s(x))
+            
+        # Compute p-orbitals
+        if self.n_p > 0:
+            for lin in self.predict_p:
+                p_tensor = lin(x)
+                p_matrix = torch.einsum('nc, cij -> nij', p_tensor, self.rtp_p.change_of_basis.to(x.device))
+                outputs.append(torch.diagonal(p_matrix, dim1=1, dim2=2))
+                
+        # Compute d-orbitals
+        if self.n_d > 0:
+            if self.needs_tp:
+                x_proj = self.proj_down(x)
+                
+            for lin in self.predict_d:
+                if self.needs_tp:
+                    d_tensor = lin(x_proj, x_proj)
+                else:
+                    d_tensor = lin(x)
+                d_matrix = torch.einsum('nc, cij -> nij', d_tensor, self.rtp_d.change_of_basis.to(x.device))
+                outputs.append(torch.diagonal(d_matrix, dim1=1, dim2=2))
+                
+        # Concatenate all populations along the feature dimension
+        # This will perfectly match module.py's self.max_outdim size and L-ordering
+        return torch.cat(outputs, dim=1)
