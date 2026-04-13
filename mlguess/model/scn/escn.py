@@ -145,7 +145,7 @@ class eSCN(nn.Module):
         self.SO3_grid = nn.ModuleList()
         for lval in range(max(self.lmax_list) + 1):
             SO3_m_grid = nn.ModuleList()
-            for m in range(max(self.mmax_list) + 1):
+            for m in range(max(self.lmax_list) + 1):
                 SO3_m_grid.append(SO3_Grid(lval, m))
 
             self.SO3_grid.append(SO3_m_grid)
@@ -169,23 +169,26 @@ class eSCN(nn.Module):
             
         self.max_n_orbitals_per_L = max_n_orbitals_per_L
         
-        if max(self.lmax_list) == 1:
-            self.coeff_idx = torch.tensor([0, 1, 1*self.sphere_channels, 2*self.sphere_channels, 3*self.sphere_channels]).long()
-            self.change_of_basis = torch.tensor([0, 3, 1, 2]).detach()
-            
-        elif max(self.lmax_list) == 2:
-            self.coeff_idx = torch.tensor([0, 1, 1*self.sphere_channels, 2*self.sphere_channels, 3*self.sphere_channels,
-                                                 4*self.sphere_channels, 5*self.sphere_channels, 6*self.sphere_channels,
-                                                 7*self.sphere_channels, 8*self.sphere_channels]).long()
-            self.change_of_basis = torch.tensor([0, 3, 1, 2, 4, 5, 6, 7, 8]).detach()
-        else:
-            raise NotImplementedError
+        L_max = max(self.lmax_list)
+        irreps_in_list = []
+        for l in range(L_max + 1):
+            parity = 'e' if l % 2 == 0 else 'o'
+            irreps_in_list.append(f"{self.sphere_channels}x{l}{parity}")
         
-        # Output linear layer using e3nn.o3.Linear
-        irreps_in = f"{self.sphere_channels}x0e + {self.sphere_channels}x1o + {self.sphere_channels}x2e"
-        # Determine if we need d-orbitals based on your basis sizing
-        max_orbital = 'd' if max(self.lmax_list) >= 2 else 'p'
-        self.lin_out = EquivariantPopulationPredictor(irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L)
+        irreps_in = " + ".join(irreps_in_list)
+
+        self.use_equivariant_predictor = True
+
+        if self.use_equivariant_predictor:
+            self.lin_out = EquivariantPopulationPredictor(
+                irreps_in, 
+                max_n_orbitals_per_L=self.max_n_orbitals_per_L
+            )
+        else:
+            self.lin_out = InvariantPopulationPredictor(
+                irreps_in, 
+                max_n_orbitals_per_L=self.max_n_orbitals_per_L
+            )
         
         self.energy_block = EnergyBlock(
             self.sphere_channels_all, self.num_sphere_samples, self.act
@@ -307,7 +310,7 @@ class eSCN(nn.Module):
         # Predicts orbital charges
         ###############################################################
         
-        x_emb_native = x.embedding[:, self.change_of_basis, :]
+        x_emb_native = x.embedding
         node_emb = x_emb_native[:, 0, :]
 
         e3nn_input_parts = []
@@ -952,66 +955,113 @@ class EquivariantPopulationPredictor(nn.Module):
         super().__init__()
         self.irreps_in = Irreps(irreps_in)
         
-        # Extract the maximum number of shells per angular momentum L across all atoms
         self.n_s = int(max_n_orbitals_per_L[0]) if len(max_n_orbitals_per_L) > 0 else 0
         self.n_p = int(max_n_orbitals_per_L[1]) if len(max_n_orbitals_per_L) > 1 else 0
         self.n_d = int(max_n_orbitals_per_L[2]) if len(max_n_orbitals_per_L) > 2 else 0
         
-        # 1. Predict all s-orbital populations (n_s scalars)
+        # --- REGISTER DXTB TRANSFORMATION MATRIX ---
+        # Decoded via Overlap Matrix (S) optimization.
+        C_matrix = torch.tensor([
+            [ 0.0000,  1.3376,  0.0000,  0.0000,  0.0000],
+            [ 0.0000,  0.0000,  0.0000,  1.3376,  0.0000],
+            [ 0.0000,  0.0000, -0.6688,  0.0000,  1.1584],
+            [ 1.3376,  0.0000,  0.0000,  0.0000,  0.0000],
+            [ 0.0000,  0.0000, -1.1584,  0.0000, -0.6688]
+        ], dtype=torch.float32)
+        self.register_buffer("C_dxtb", C_matrix)
+        # -------------------------------------------
+
         if self.n_s > 0:
             self.predict_s = Linear(self.irreps_in, f"{self.n_s}x0e")
         
-        # 2. Predict all p-shell tensors (symmetric 3x3 matrices)
         if self.n_p > 0:
             self.rtp_p = ReducedTensorProducts('ij=ji', i='1o')
             self.predict_p = nn.ModuleList([
                 Linear(self.irreps_in, self.rtp_p.irreps_out) for _ in range(self.n_p)
             ])
         
-        # 3. Predict all d-shell tensors (symmetric 5x5 matrices)
         if self.n_d > 0:
             self.rtp_d = ReducedTensorProducts('ij=ji', i='2e')
-            
             l_max_in = max([l for _, (l, p) in self.irreps_in])
-            self.needs_tp = (l_max_in < 4)
+            self.needs_tp = (l_max_in < 4) # Will evaluate to True for Lmax=2
             
-            self.predict_d = nn.ModuleList()
             if self.needs_tp:
+                # Use a lightweight bottleneck to keep the quadratic tensor product fast
                 bottleneck = "16x0e + 16x1o + 16x2e"
                 self.proj_down = Linear(self.irreps_in, bottleneck)
-                for _ in range(self.n_d):
-                    self.predict_d.append(FullyConnectedTensorProduct(bottleneck, bottleneck, self.rtp_d.irreps_out))
+                
+                # LINEAR BYPASS: Learn the population trace (0e) and base shapes (2e) linearly
+                self.predict_d_lin = nn.ModuleList([
+                    Linear(self.irreps_in, "1x0e + 1x2e") for _ in range(self.n_d)
+                ])
+                # QUADRATIC PATH: Synthesize the missing 4e components via Tensor Product
+                self.predict_d_tp = nn.ModuleList([
+                    FullyConnectedTensorProduct(bottleneck, bottleneck, "1x4e") for _ in range(self.n_d)
+                ])
             else:
-                for _ in range(self.n_d):
-                    self.predict_d.append(Linear(self.irreps_in, self.rtp_d.irreps_out))
+                self.predict_d = nn.ModuleList([
+                    Linear(self.irreps_in, self.rtp_d.irreps_out) for _ in range(self.n_d)
+                ])
 
     def forward(self, x):
         outputs = []
         
-        # Compute s-orbitals
         if self.n_s > 0:
             outputs.append(self.predict_s(x))
             
-        # Compute p-orbitals
         if self.n_p > 0:
             for lin in self.predict_p:
                 p_tensor = lin(x)
                 p_matrix = torch.einsum('nc, cij -> nij', p_tensor, self.rtp_p.change_of_basis.to(x.device))
                 outputs.append(torch.diagonal(p_matrix, dim1=1, dim2=2))
                 
-        # Compute d-orbitals
         if self.n_d > 0:
             if self.needs_tp:
                 x_proj = self.proj_down(x)
                 
-            for lin in self.predict_d:
+            for i in range(self.n_d):
                 if self.needs_tp:
-                    d_tensor = lin(x_proj, x_proj)
+                    d_tensor_lin = self.predict_d_lin[i](x)
+                    d_tensor_tp = self.predict_d_tp[i](x_proj, x_proj)
+                    # Concatenate to form the full irreps_out (0e + 2e + 4e)
+                    d_tensor = torch.cat([d_tensor_lin, d_tensor_tp], dim=1)
                 else:
-                    d_tensor = lin(x)
-                d_matrix = torch.einsum('nc, cij -> nij', d_tensor, self.rtp_d.change_of_basis.to(x.device))
-                outputs.append(torch.diagonal(d_matrix, dim1=1, dim2=2))
+                    d_tensor = self.predict_d[i](x)
+                    
+                # 1. Reconstruct e3nn's native 5x5 symmetric matrix
+                d_matrix_e3nn = torch.einsum('nc, cij -> nij', d_tensor, self.rtp_d.change_of_basis.to(x.device))
                 
-        # Concatenate all populations along the feature dimension
-        # This will perfectly match module.py's self.max_outdim size and L-ordering
+                # 2. Match mixed-precision dtypes
+                C = self.C_dxtb.type_as(d_matrix_e3nn)
+                
+                # 3. Apply the Cartesian transformation: M_dxtb = C * M_e3nn * C^T
+                d_matrix_dxtb = C @ d_matrix_e3nn @ C.T
+                
+                # 4. Extract the exact equivariant populations!
+                pop_d_dxtb = torch.diagonal(d_matrix_dxtb, dim1=1, dim2=2)
+                outputs.append(pop_d_dxtb)
+                
         return torch.cat(outputs, dim=1)
+    
+
+class InvariantPopulationPredictor(nn.Module):
+    def __init__(self, irreps_in, max_n_orbitals_per_L):
+        super().__init__()
+        self.irreps_in = Irreps(irreps_in)
+        
+        self.n_s = int(max_n_orbitals_per_L[0]) if len(max_n_orbitals_per_L) > 0 else 0
+        self.n_p = int(max_n_orbitals_per_L[1]) if len(max_n_orbitals_per_L) > 1 else 0
+        self.n_d = int(max_n_orbitals_per_L[2]) if len(max_n_orbitals_per_L) > 2 else 0
+        
+        # Calculate the total number of individual orbital charges required by the basis set.
+        # s-shell = 1 scalar, p-shell = 3 scalars, d-shell = 5 scalars
+        self.total_scalar_outputs = self.n_s + (self.n_p * 3) + (self.n_d * 5)
+        
+        # e3nn's Linear automatically maps the 0e inputs to 0e outputs.
+        # It rigorously zeroes out any connection to the 1o, 2e, 3o, and 4e features.
+        self.predict_invariant = Linear(self.irreps_in, f"{self.total_scalar_outputs}x0e")
+
+    def forward(self, x):
+        # x contains the full geometric embedding.
+        # The output is a flat tensor of shape [batch_size, total_scalar_outputs]
+        return self.predict_invariant(x)
