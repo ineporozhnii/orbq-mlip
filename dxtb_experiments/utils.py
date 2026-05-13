@@ -131,14 +131,58 @@ def calculate_dxtb(args: tuple):
         return None
     calc_time = time.time() - start
     
+    from dxtb._src.scf.iterator import get_refocc
+
     # Extract and convert results
     n_scf_iter = torch.tensor([result.iter])
     calc_time_tensor = torch.tensor([calc_time])
     final_potential = result.potential.mono.detach().cpu()
     final_emo = result.emo.detach().cpu()
     final_energy = result.total.detach().cpu()
-    orbital_charges = result.charges.mono.detach().cpu()
     atomic_charges = calc.ihelp.reduce_orbital_to_atom(result.charges.mono).detach().cpu()
+    
+    # Equivariant Orbital Charges (Q_true)
+    P_true = result.density.squeeze()
+    S_true = calc.integrals.build_overlap(positions).squeeze()
+    M_true = P_true @ S_true
+    
+    n0, occ = get_refocc(calc.integrals.hcore.refocc, torch.tensor([0.0]), torch.tensor([0.0]), calc.ihelp)
+    N0_mat = torch.diag(n0.squeeze())
+    Q_true = N0_mat - M_true
+    
+    # Verify diagonal matches orbital charges
+    mono_charges = result.charges.mono.squeeze()
+    assert torch.allclose(torch.diagonal(Q_true), mono_charges, atol=1e-4), "Diagonals of Q do not match orbital charges!"
+    
+    # Sort and extract blocks
+    n_diagonals = Q_true.shape[0]
+    dummy_indices = torch.arange(n_diagonals, dtype=torch.float)
+    
+    sort_perm = dxtb_to_escn_orbitals(
+        angular_momentum_per_shell=calc.ihelp.angular,
+        property_tensor=dummy_indices,
+        map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
+        map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
+    ).long()
+    
+    Q_sorted = Q_true[sort_perm][:, sort_perm]
+    blocks = []
+    offset = 0
+    sorted_lm = calc.ihelp.angular[calc.ihelp.orbitals_to_shell][sort_perm]
+    sorted_atom = calc.ihelp.shells_to_atom[calc.ihelp.orbitals_to_shell][sort_perm]
+    
+    for atom_idx in range(len(numbers)):
+        atom_mask = (sorted_atom == atom_idx)
+        lms_for_atom = sorted_lm[atom_mask]
+        
+        if lms_for_atom.numel() > 0:
+            unique_lms, counts = torch.unique_consecutive(lms_for_atom, return_counts=True)
+            for size in counts:
+                block = Q_sorted[offset:offset+size, offset:offset+size]
+                blocks.append(block.flatten())
+                offset += size
+                
+    orbital_charges = torch.cat(blocks).detach().cpu()
     
     # Update the original data dictionary with dxtb results
     data["dxtb_charges_orbital"] = orbital_charges
