@@ -29,47 +29,9 @@ def read_npz(filecontent):
     
     calc = dxtb.calculators.GFN1Calculator(atomic_numbers)
     
-    if orbital_charges_dxtb.dim() == 1:
-        # Standard 1D populations
-        orbital_charges_dxtb = dxtb_to_escn_orbitals(
-            angular_momentum_per_shell=calc.ihelp.angular,
-            property_tensor=orbital_charges_dxtb,
-            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
-            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
-        )
-    elif orbital_charges_dxtb.dim() == 2:
-        # Full 2D Density Matrix
-        n_diagonals = orbital_charges_dxtb.shape[0]
-        dummy_indices = torch.arange(n_diagonals, dtype=torch.float)
-        
-        sort_perm = dxtb_to_escn_orbitals(
-            angular_momentum_per_shell=calc.ihelp.angular,
-            property_tensor=dummy_indices,
-            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
-            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
-        ).long()
-        
-        # Sort rows and columns
-        P_sorted = orbital_charges_dxtb[sort_perm][:, sort_perm]
-        
-        # Extract blocks for each shell per atom
-        blocks = []
-        offset = 0
-        sorted_lm = calc.ihelp.angular[calc.ihelp.orbitals_to_shell][sort_perm]
-        sorted_atom = calc.ihelp.shells_to_atom[calc.ihelp.orbitals_to_shell][sort_perm]
-        
-        for atom_idx in range(len(atomic_numbers)):
-            atom_mask = (sorted_atom == atom_idx)
-            lms_for_atom = sorted_lm[atom_mask]
-            
-            if lms_for_atom.numel() > 0:
-                unique_lms, counts = torch.unique_consecutive(lms_for_atom, return_counts=True)
-                for size in counts:
-                    block = P_sorted[offset:offset+size, offset:offset+size]
-                    blocks.append(block.flatten())
-                    offset += size
-                    
-        orbital_charges_dxtb = torch.cat(blocks)
+    if orbital_charges_dxtb.dim() == 2:
+        raise ValueError("orbital_charges_dxtb should be a 1D tensor of pre-extracted orbital blocks. Please regenerate dataset.")
+    # The dataset already provides sorted and flattened block elements.
 
     return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, \
             atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb

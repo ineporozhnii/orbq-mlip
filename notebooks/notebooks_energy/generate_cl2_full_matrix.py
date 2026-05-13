@@ -7,6 +7,7 @@ import numpy as np
 import dxtb
 from tad_mctc.units import AA2AU
 from dxtb._src.scf.iterator import get_refocc
+from dxtb_experiments.utils import dxtb_to_escn_orbitals
 
 def get_random_rotation_matrix():
     angle_x = torch.rand(1).item() * 2 * math.pi
@@ -61,12 +62,42 @@ def generate_cl2_full_matrix_dataset():
         mono_charges = res.charges.mono.squeeze()
         assert torch.allclose(torch.diagonal(Q_true), mono_charges, atol=1e-4), "Diagonals of Q do not match orbital charges!"
         
+        # Sort and extract blocks
+        n_diagonals = Q_true.shape[0]
+        dummy_indices = torch.arange(n_diagonals, dtype=torch.float)
+        
+        sort_perm = dxtb_to_escn_orbitals(
+            angular_momentum_per_shell=calc.ihelp.angular,
+            property_tensor=dummy_indices,
+            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
+            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
+        ).long()
+        
+        Q_sorted = Q_true[sort_perm][:, sort_perm]
+        blocks = []
+        offset = 0
+        sorted_lm = calc.ihelp.angular[calc.ihelp.orbitals_to_shell][sort_perm]
+        sorted_atom = calc.ihelp.shells_to_atom[calc.ihelp.orbitals_to_shell][sort_perm]
+        
+        for atom_idx in range(len(atomic_numbers)):
+            atom_mask = (sorted_atom == atom_idx)
+            lms_for_atom = sorted_lm[atom_mask]
+            
+            if lms_for_atom.numel() > 0:
+                unique_lms, counts = torch.unique_consecutive(lms_for_atom, return_counts=True)
+                for size in counts:
+                    block = Q_sorted[offset:offset+size, offset:offset+size]
+                    blocks.append(block.flatten())
+                    offset += size
+                    
+        final_charges = torch.cat(blocks)
+        
         energy = res.total.sum().item()
         
         npz_dict = {
             "numbers": atomic_numbers.numpy().astype(np.int32),
             "coord": cart_coord_rot.numpy().astype(np.float32),
-            "final_charges": Q_true.cpu().numpy().astype(np.float32),
+            "final_charges": final_charges.cpu().numpy().astype(np.float32),
             "total_energy_corrected": energy,
             "mulliken_charges": np.zeros_like(atomic_numbers),
             "lowdin_charges": np.zeros_like(atomic_numbers),
