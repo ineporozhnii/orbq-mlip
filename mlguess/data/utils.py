@@ -5,27 +5,36 @@ import dxtb
 from dxtb_experiments.utils import dxtb_to_escn_orbitals
 from tad_mctc.units import AA2AU
 
-def read_npz(filecontent):
-    data = np.load(io.BytesIO(filecontent))
-    atomic_numbers = torch.from_numpy(data["numbers"]).long()
-    cart_coords = torch.from_numpy(data["coord"]).float() / AA2AU
-    orbital_charges_dxtb = torch.from_numpy(data["final_charges"]).float()
-    total_energy = torch.tensor(data['total_energy_corrected']).float()
+def read_pt(filecontent):
+    if isinstance(filecontent, bytes):
+        data = torch.load(io.BytesIO(filecontent), map_location="cpu", weights_only=False)
+    else:
+        data = torch.load(filecontent, map_location="cpu", weights_only=False)
+
+    atomic_numbers = data["atom_types"].long()
+    cart_coords = data["coords"].float() / AA2AU
     
-    atomic_charges_mulliken = torch.from_numpy(data["mulliken_charges"]).float()
-    atomic_charges_lowdin = torch.from_numpy(data["lowdin_charges"]).float()
-    atomic_charges_dxtb = torch.from_numpy(data["dxtb_charges"]).float()
+    # Extract quantities saved by extract_structures.py and combined with dxtb
+    orbital_charges_dxtb = data.get("dxtb_charges").float()
+    total_energy = data.get("total_energy", torch.tensor(0.0)).float()
+    
+    atomic_charges_mulliken = data.get("mulliken_charges").float()
+    atomic_charges_lowdin = data.get("lowdin_charges").float()
+    atomic_charges_dxtb = data.get("dxtb_charges").float()
+    
     cell = torch.tensor([[100, 0, 0],
                          [0, 100, 0],
                          [0, 0, 100]]).float()
     
     calc = dxtb.calculators.GFN1Calculator(atomic_numbers)
-    orbital_charges_dxtb = dxtb_to_escn_orbitals(
-        angular_momentum_per_shell=calc.ihelp.angular,
-        property_tensor=orbital_charges_dxtb,
-        map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
-        map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
-    )  # convert orbital charges ordering to escn format
+    
+    if orbital_charges_dxtb.numel() > 0:
+        orbital_charges_dxtb = dxtb_to_escn_orbitals(
+            angular_momentum_per_shell=calc.ihelp.angular,
+            property_tensor=orbital_charges_dxtb,
+            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
+            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
+        )  # convert orbital charges ordering to escn format
 
     return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, \
             atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb
