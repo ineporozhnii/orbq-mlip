@@ -1,41 +1,39 @@
 import io
 import torch
 import numpy as np
-import dxtb
-from dxtb_experiments.utils import dxtb_to_escn_orbitals
-from tad_mctc.units import AA2AU
 
-def read_npz(filecontent):
-    data = np.load(io.BytesIO(filecontent))
-    atomic_numbers = torch.from_numpy(data["numbers"]).long()
-    cart_coords = torch.from_numpy(data["coord"]).float() / AA2AU
-    orbital_charges_dxtb = torch.from_numpy(data["final_charges"]).float()
-    try:
-        total_energy = torch.tensor(data['total_energy_corrected']).float()
+def read_pt(filecontent):
+    if isinstance(filecontent, bytes):
+        data = torch.load(io.BytesIO(filecontent), map_location="cpu", weights_only=False)
+    else:
+        data = torch.load(filecontent, map_location="cpu", weights_only=False)
+
+    atomic_numbers = data["atom_types"].long()
+    cart_coords = data["coords"].float()
+    
+    total_energy = data.get("total_energy")
+    total_energy = total_energy.float()
+    
+    orbital_charges_dxtb = data.get("dxtb_charges_orbital")
+    orbital_charges_dxtb = orbital_charges_dxtb.float()
+    
+    atomic_charges_dxtb = data.get("dxtb_charges_atomic")
+    atomic_charges_dxtb = atomic_charges_dxtb.float()
+    
+    atomic_charges_mulliken = data.get("mulliken_charges")
+    atomic_charges_mulliken = atomic_charges_mulliken.float()
+    
+    atomic_charges_lowdin = data.get("lowdin_charges")
+    atomic_charges_lowdin = atomic_charges_lowdin.float()
         
-        atomic_charges_mulliken = torch.from_numpy(data["mulliken_charges"]).float()
-        atomic_charges_lowdin = torch.from_numpy(data["lowdin_charges"]).float()
-        atomic_charges_dxtb = torch.from_numpy(data["dxtb_charges"]).float()
-    except Exception as e:
-        print(f"Warning: Missing keys in npz file. Setting default values. Error: {e}")
-        total_energy = torch.tensor(0.0).float()
-        
-        atomic_charges_mulliken = torch.zeros_like(atomic_numbers).float()
-        atomic_charges_lowdin = torch.zeros_like(atomic_numbers).float()
-        atomic_charges_dxtb = torch.zeros_like(atomic_numbers).float()
     cell = torch.tensor([[100, 0, 0],
                          [0, 100, 0],
                          [0, 0, 100]]).float()
-    
-    calc = dxtb.calculators.GFN1Calculator(atomic_numbers)
-    
+                         
     if orbital_charges_dxtb.dim() == 2:
         raise ValueError("orbital_charges_dxtb should be a 1D tensor of pre-extracted orbital blocks. Please regenerate dataset.")
-    # The dataset already provides sorted and flattened block elements.
 
-    return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, \
-            atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb
-
+    return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb
 
 def make_graph(
     cell,

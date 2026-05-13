@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from mlguess.common.pyg import Data
-from mlguess.data.utils import read_npz, make_graph
+from mlguess.data.utils import read_pt, make_graph
 
 class AtomicNumberTable:
     def __init__(self, zs):
@@ -115,10 +115,11 @@ class AtomicData(Data):
         max_neighbors: int = 24,
         device: str = "cpu",
     ):
-        assert finfo.name.endswith((".npz")), "Only .npz files are supported."
+        assert finfo.name.endswith(".pt"), "Only .pt files are supported."
         assert (fpath or (fcontent and finfo)) and not (fpath and (fcontent and finfo))
 
-        data = read_npz(fcontent)
+        data = read_pt(fcontent)
+            
         metadata = finfo.name.split("/")[-1].split(".")[0]
     
         return cls.build_graph(
