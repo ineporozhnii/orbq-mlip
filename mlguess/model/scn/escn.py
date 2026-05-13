@@ -1013,7 +1013,7 @@ class EquivariantPopulationPredictor(nn.Module):
             for lin in self.predict_p:
                 p_tensor = lin(x)
                 p_matrix = torch.einsum('nc, cij -> nij', p_tensor, self.rtp_p.change_of_basis.to(x.device))
-                outputs.append(torch.diagonal(p_matrix, dim1=1, dim2=2))
+                outputs.append(p_matrix.flatten(start_dim=1))
                 
         if self.n_d > 0:
             if self.needs_tp:
@@ -1038,7 +1038,7 @@ class EquivariantPopulationPredictor(nn.Module):
                 d_matrix_dxtb = C @ d_matrix_e3nn @ C.T
                 
                 # 4. Extract the exact equivariant populations!
-                pop_d_dxtb = torch.diagonal(d_matrix_dxtb, dim1=1, dim2=2)
+                pop_d_dxtb = d_matrix_dxtb.flatten(start_dim=1)
                 outputs.append(pop_d_dxtb)
                 
         return torch.cat(outputs, dim=1)
@@ -1054,8 +1054,8 @@ class InvariantPopulationPredictor(nn.Module):
         self.n_d = int(max_n_orbitals_per_L[2]) if len(max_n_orbitals_per_L) > 2 else 0
         
         # Calculate the total number of individual orbital charges required by the basis set.
-        # s-shell = 1 scalar, p-shell = 3 scalars, d-shell = 5 scalars
-        self.total_scalar_outputs = self.n_s + (self.n_p * 3) + (self.n_d * 5)
+        # s-shell = 1 scalar, p-shell = 9 scalars (3x3), d-shell = 25 scalars (5x5)
+        self.total_scalar_outputs = self.n_s + (self.n_p * 9) + (self.n_d * 25)
         
         # e3nn's Linear automatically maps the 0e inputs to 0e outputs.
         # It rigorously zeroes out any connection to the 1o, 2e, 3o, and 4e features.

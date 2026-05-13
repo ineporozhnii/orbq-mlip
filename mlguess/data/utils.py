@@ -10,22 +10,66 @@ def read_npz(filecontent):
     atomic_numbers = torch.from_numpy(data["numbers"]).long()
     cart_coords = torch.from_numpy(data["coord"]).float() / AA2AU
     orbital_charges_dxtb = torch.from_numpy(data["final_charges"]).float()
-    total_energy = torch.tensor(data['total_energy_corrected']).float()
-    
-    atomic_charges_mulliken = torch.from_numpy(data["mulliken_charges"]).float()
-    atomic_charges_lowdin = torch.from_numpy(data["lowdin_charges"]).float()
-    atomic_charges_dxtb = torch.from_numpy(data["dxtb_charges"]).float()
+    try:
+        total_energy = torch.tensor(data['total_energy_corrected']).float()
+        
+        atomic_charges_mulliken = torch.from_numpy(data["mulliken_charges"]).float()
+        atomic_charges_lowdin = torch.from_numpy(data["lowdin_charges"]).float()
+        atomic_charges_dxtb = torch.from_numpy(data["dxtb_charges"]).float()
+    except Exception as e:
+        print(f"Warning: Missing keys in npz file. Setting default values. Error: {e}")
+        total_energy = torch.tensor(0.0).float()
+        
+        atomic_charges_mulliken = torch.zeros_like(atomic_numbers).float()
+        atomic_charges_lowdin = torch.zeros_like(atomic_numbers).float()
+        atomic_charges_dxtb = torch.zeros_like(atomic_numbers).float()
     cell = torch.tensor([[100, 0, 0],
                          [0, 100, 0],
                          [0, 0, 100]]).float()
     
     calc = dxtb.calculators.GFN1Calculator(atomic_numbers)
-    orbital_charges_dxtb = dxtb_to_escn_orbitals(
-        angular_momentum_per_shell=calc.ihelp.angular,
-        property_tensor=orbital_charges_dxtb,
-        map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
-        map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
-    )  # convert orbital charges ordering to escn format
+    
+    if orbital_charges_dxtb.dim() == 1:
+        # Standard 1D populations
+        orbital_charges_dxtb = dxtb_to_escn_orbitals(
+            angular_momentum_per_shell=calc.ihelp.angular,
+            property_tensor=orbital_charges_dxtb,
+            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
+            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
+        )
+    elif orbital_charges_dxtb.dim() == 2:
+        # Full 2D Density Matrix
+        n_diagonals = orbital_charges_dxtb.shape[0]
+        dummy_indices = torch.arange(n_diagonals, dtype=torch.float)
+        
+        sort_perm = dxtb_to_escn_orbitals(
+            angular_momentum_per_shell=calc.ihelp.angular,
+            property_tensor=dummy_indices,
+            map_shell_to_atom_idx=calc.ihelp.shells_to_atom,
+            map_orbital_to_shell_idx=calc.ihelp.orbitals_to_shell
+        ).long()
+        
+        # Sort rows and columns
+        P_sorted = orbital_charges_dxtb[sort_perm][:, sort_perm]
+        
+        # Extract blocks for each shell per atom
+        blocks = []
+        offset = 0
+        sorted_lm = calc.ihelp.angular[calc.ihelp.orbitals_to_shell][sort_perm]
+        sorted_atom = calc.ihelp.shells_to_atom[calc.ihelp.orbitals_to_shell][sort_perm]
+        
+        for atom_idx in range(len(atomic_numbers)):
+            atom_mask = (sorted_atom == atom_idx)
+            lms_for_atom = sorted_lm[atom_mask]
+            
+            if lms_for_atom.numel() > 0:
+                unique_lms, counts = torch.unique_consecutive(lms_for_atom, return_counts=True)
+                for size in counts:
+                    block = P_sorted[offset:offset+size, offset:offset+size]
+                    blocks.append(block.flatten())
+                    offset += size
+                    
+        orbital_charges_dxtb = torch.cat(blocks)
 
     return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, \
             atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb
