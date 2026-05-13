@@ -146,11 +146,11 @@ class EnergyChargesLightningModule(LightningModule):
             pred_charges_diag = pred_charges_diag_pad[self.orb_index[batch.atom_types]]
             
             target_mat_pad = torch.zeros(self.matrix_orb_index[batch.atom_types].shape, device=orbital_charges.device)
-            target_mat_pad[self.matrix_orb_index[batch.atom_types]] = target_charges * scale_charges
+            target_mat_pad[self.matrix_orb_index[batch.atom_types]] = target_charges
             target_charges_diag_pad = torch.gather(target_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types])
             target_charges_diag = target_charges_diag_pad[self.orb_index[batch.atom_types]]
             
-            self.pred_charges_diag = self.orbital_charge_correction(batch, pred_charges_diag)
+            self.pred_charges_diag = pred_charges_diag
             self.target_charges_diag = target_charges_diag
             
         elif self.hparams.charges_type == 'atomic_dxtb':
