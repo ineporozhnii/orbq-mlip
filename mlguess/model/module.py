@@ -145,12 +145,26 @@ class EnergyChargesLightningModule(LightningModule):
             pred_charges_diag_pad = torch.gather(charges_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types])
             pred_charges_diag = pred_charges_diag_pad[self.orb_index[batch.atom_types]]
             
+            # Apply orbital charge correction to enforce total charge constraint
+            corrected_charges_diag = self.orbital_charge_correction(batch, pred_charges_diag)
+            
+            # Calculate the difference to shift the diagonal
+            correction_diff = corrected_charges_diag - pred_charges_diag
+            correction_diff_pad = torch.zeros(self.orb_index[batch.atom_types].shape, device=orbital_charges.device)
+            correction_diff_pad[self.orb_index[batch.atom_types]] = correction_diff
+            
+            # Add the difference directly back to the full matrix diagonal
+            charges_mat_pad = charges_mat_pad.scatter_add(1, self.diag_in_matrix_index[batch.atom_types], correction_diff_pad)
+            
+            # Re-extract the corrected full matrix back to pred_charges
+            pred_charges = charges_mat_pad[self.matrix_orb_index[batch.atom_types]]
+            
             target_mat_pad = torch.zeros(self.matrix_orb_index[batch.atom_types].shape, device=orbital_charges.device)
             target_mat_pad[self.matrix_orb_index[batch.atom_types]] = target_charges
             target_charges_diag_pad = torch.gather(target_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types])
             target_charges_diag = target_charges_diag_pad[self.orb_index[batch.atom_types]]
             
-            self.pred_charges_diag = pred_charges_diag
+            self.pred_charges_diag = corrected_charges_diag
             self.target_charges_diag = target_charges_diag
             
         elif self.hparams.charges_type == 'atomic_dxtb':

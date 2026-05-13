@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import dxtb
 from tad_mctc.units import AA2AU
+from dxtb._src.scf.iterator import get_refocc
 
 def get_random_rotation_matrix():
     angle_x = torch.rand(1).item() * 2 * math.pi
@@ -19,7 +20,7 @@ def get_random_rotation_matrix():
     return rx @ ry @ rz
 
 def generate_cl2_full_matrix_dataset():
-    out_dir = "/home/ihor/projects/MLGuessQC/datasets/Cl2_debug_full_matrix/Cl2_dxtb_results"
+    out_dir = "/home/ihor/projects/MLGuessQC/datasets/Cl2_debug_full_matrix_charge/Cl2_dxtb_results"
     os.makedirs(out_dir, exist_ok=True)
     
     # Base Cl2 coordinates
@@ -47,13 +48,25 @@ def generate_cl2_full_matrix_dataset():
         res = calc.singlepoint(cart_coord_rot_au)
         
         P_true = res.density.squeeze()
+        S_true = calc.integrals.build_overlap(cart_coord_rot_au).squeeze()
+        M_true = P_true @ S_true
+        
+        n0, occ = get_refocc(calc.integrals.hcore.refocc, torch.tensor([0.0]), torch.tensor([0.0]), calc.ihelp)
+        N0_mat = torch.diag(n0.squeeze())
+        
+        # Q_true is exactly the orbital charge matrix (Charge = N0 - Population)
+        Q_true = N0_mat - M_true
+        
+        # Verify diagonal matches orbital charges
+        mono_charges = res.charges.mono.squeeze()
+        assert torch.allclose(torch.diagonal(Q_true), mono_charges, atol=1e-4), "Diagonals of Q do not match orbital charges!"
         
         energy = res.total.sum().item()
         
         npz_dict = {
             "numbers": atomic_numbers.numpy().astype(np.int32),
             "coord": cart_coord_rot.numpy().astype(np.float32),
-            "final_charges": P_true.cpu().numpy().astype(np.float32),
+            "final_charges": Q_true.cpu().numpy().astype(np.float32),
             "total_energy_corrected": energy,
             "mulliken_charges": np.zeros_like(atomic_numbers),
             "lowdin_charges": np.zeros_like(atomic_numbers),

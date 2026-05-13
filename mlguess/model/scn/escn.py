@@ -975,13 +975,13 @@ class EquivariantPopulationPredictor(nn.Module):
             self.predict_s = Linear(self.irreps_in, f"{self.n_s}x0e")
         
         if self.n_p > 0:
-            self.rtp_p = ReducedTensorProducts('ij=ji', i='1o')
+            self.rtp_p = ReducedTensorProducts('ij', i='1o', j='1o')
             self.predict_p = nn.ModuleList([
                 Linear(self.irreps_in, self.rtp_p.irreps_out) for _ in range(self.n_p)
             ])
         
         if self.n_d > 0:
-            self.rtp_d = ReducedTensorProducts('ij=ji', i='2e')
+            self.rtp_d = ReducedTensorProducts('ij', i='2e', j='2e')
             l_max_in = max([l for _, (l, p) in self.irreps_in])
             self.needs_tp = (l_max_in < 4) # Will evaluate to True for Lmax=2
             
@@ -992,11 +992,11 @@ class EquivariantPopulationPredictor(nn.Module):
                 
                 # LINEAR BYPASS: Learn the population trace (0e) and base shapes (2e) linearly
                 self.predict_d_lin = nn.ModuleList([
-                    Linear(self.irreps_in, "1x0e + 1x2e") for _ in range(self.n_d)
+                    Linear(self.irreps_in, "1x0e + 1x1e + 1x2e") for _ in range(self.n_d)
                 ])
                 # QUADRATIC PATH: Synthesize the missing 4e components via Tensor Product
                 self.predict_d_tp = nn.ModuleList([
-                    FullyConnectedTensorProduct(bottleneck, bottleneck, "1x4e") for _ in range(self.n_d)
+                    FullyConnectedTensorProduct(bottleneck, bottleneck, "1x3e + 1x4e") for _ in range(self.n_d)
                 ])
             else:
                 self.predict_d = nn.ModuleList([
@@ -1035,7 +1035,8 @@ class EquivariantPopulationPredictor(nn.Module):
                 C = self.C_dxtb.type_as(d_matrix_e3nn)
                 
                 # 3. Apply the Cartesian transformation: M_dxtb = C * M_e3nn * C^T
-                d_matrix_dxtb = C @ d_matrix_e3nn @ C.T
+                C_inv = torch.linalg.inv(C)
+                d_matrix_dxtb = C @ d_matrix_e3nn @ C_inv
                 
                 # 4. Extract the exact equivariant populations!
                 pop_d_dxtb = d_matrix_dxtb.flatten(start_dim=1)
