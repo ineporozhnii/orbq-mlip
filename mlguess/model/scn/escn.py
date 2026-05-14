@@ -70,9 +70,11 @@ class eSCN(nn.Module):
         basis_width_scalar: float = 1.0,
         distance_resolution: float = 0.02,
         show_timing_info: bool = False,
+        regress_forces: bool = False,
         *args, **kwargs
     ) -> None:
         super().__init__()
+        self.regress_forces = regress_forces
 
         self.cutoff = cutoff
         self.show_timing_info = show_timing_info
@@ -193,6 +195,10 @@ class eSCN(nn.Module):
         self.energy_block = EnergyBlock(
             self.sphere_channels_all, self.num_sphere_samples, self.act
         )
+        if getattr(self, "regress_forces", False):
+            self.force_block = ForceBlock(
+                self.sphere_channels_all, self.num_sphere_samples, self.act
+            )
         
         self.atomic_charge_block = AtomicChargeBlock(
             self.sphere_channels_all, self.num_sphere_samples, self.act
@@ -359,9 +365,12 @@ class eSCN(nn.Module):
         # Atomic Charge prediction
         ################################################################
         node_charges = self.atomic_charge_block(x_pt_energy).flatten()
-        # node_charges = self.atomic_charge_lin(x_pt_for_e3nn).flatten()
         
-        return energy, orbital_charges, node_charges, node_emb
+        if getattr(self, "regress_forces", False):
+            forces = self.force_block(x_pt_energy, self.sphere_points)
+            return energy, forces, orbital_charges, node_charges, node_emb
+        else:
+            return energy, orbital_charges, node_charges, node_emb
     
 
     # Initialize the edge rotation matrices
@@ -949,6 +958,26 @@ class AtomicChargeBlock(torch.nn.Module):
         return node_charge
     
 
+
+
+class ForceBlock(torch.nn.Module):
+    def __init__(self, num_channels, num_sphere_samples, act):
+        super(ForceBlock, self).__init__()
+        self.num_channels = num_channels
+        self.num_sphere_samples = num_sphere_samples
+        self.act = act
+        self.fc1 = nn.Linear(self.num_channels, self.num_channels)
+        self.fc2 = nn.Linear(self.num_channels, self.num_channels)
+        self.fc3 = nn.Linear(self.num_channels, 1, bias=False)
+
+    def forward(self, x_pt, sphere_points):
+        x_pt = self.act(self.fc1(x_pt))
+        x_pt = self.act(self.fc2(x_pt))
+        x_pt = self.fc3(x_pt)
+        x_pt = x_pt.view(-1, self.num_sphere_samples, 1)
+        forces = x_pt * sphere_points.view(1, self.num_sphere_samples, 3)
+        forces = torch.sum(forces, dim=1) / self.num_sphere_samples
+        return forces
 
 class EquivariantPopulationPredictor(nn.Module):
     def __init__(self, irreps_in, max_n_orbitals_per_L):

@@ -21,7 +21,7 @@ def get_random_rotation_matrix():
     return rx @ ry @ rz
 
 def generate_cl2_full_matrix_dataset():
-    out_dir = "/home/ihor/projects/MLGuessQC/datasets/Cl2_debug_full_matrix_charge/Cl2_dxtb_results"
+    out_dir = "/home/ihor/projects/MLGuessQC/datasets/Cl2_debug_full_matrix_charge_forces/Cl2_dxtb_results"
     os.makedirs(out_dir, exist_ok=True)
     
     # Base Cl2 coordinates
@@ -44,6 +44,7 @@ def generate_cl2_full_matrix_dataset():
         
         # dxtb expects Bohr
         cart_coord_rot_au = cart_coord_rot * AA2AU
+        cart_coord_rot_au = cart_coord_rot_au.requires_grad_(True)
         
         calc = dxtb.calculators.GFN1Calculator(atomic_numbers, **calc_config)
         res = calc.singlepoint(cart_coord_rot_au)
@@ -91,26 +92,30 @@ def generate_cl2_full_matrix_dataset():
                     offset += size
                     
         final_charges = torch.cat(blocks)
-        
         energy = res.total.sum().item()
         
-        npz_dict = {
-            "numbers": atomic_numbers.numpy().astype(np.int32),
-            "coord": cart_coord_rot.numpy().astype(np.float32),
-            "final_charges": final_charges.cpu().numpy().astype(np.float32),
-            "total_energy_corrected": energy,
-            "mulliken_charges": np.zeros_like(atomic_numbers),
-            "lowdin_charges": np.zeros_like(atomic_numbers),
-            "dxtb_charges": np.zeros_like(atomic_numbers),
+        # Compute exact dxtb forces for debugging dataset
+        forces_au = calc.get_forces(cart_coord_rot_au)
+        forces = forces_au / AA2AU  # Convert back to atomic units per Angstrom, or whatever units used
+        
+        data_dict = {
+            "atom_types": atomic_numbers.long(),
+            "coords": cart_coord_rot.float(),
+            "dxtb_charges_orbital": final_charges.cpu().float(),
+            "total_energy": torch.tensor(energy, dtype=torch.float32),
+            "dxtb_charges_atomic": torch.zeros_like(atomic_numbers, dtype=torch.float32),
+            "mulliken_charges": torch.zeros_like(atomic_numbers, dtype=torch.float32),
+            "lowdin_charges": torch.zeros_like(atomic_numbers, dtype=torch.float32),
+            "forces": forces.cpu().float(),
         }
         
-        filename = f"{str(i).zfill(6)}.npz"
-        np.savez(os.path.join(out_dir, filename), **npz_dict)
+        filename = f"{str(i).zfill(6)}.pt"
+        torch.save(data_dict, os.path.join(out_dir, filename))
     
     splits = {
-        "train": [f"{str(i).zfill(6)}.npz" for i in range(1)],
-        "val": [f"{str(i).zfill(6)}.npz" for i in range(1, 11)],
-        "test": [f"{str(i).zfill(6)}.npz" for i in range(11, 21)]
+        "train": [f"{str(i).zfill(6)}.pt" for i in range(1)],
+        "val": [f"{str(i).zfill(6)}.pt" for i in range(1, 11)],
+        "test": [f"{str(i).zfill(6)}.pt" for i in range(11, 21)]
     }
     with open(os.path.join(out_dir, "datasplits.json"), "w") as f:
         json.dump(splits, f, indent=4)

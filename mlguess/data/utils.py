@@ -8,32 +8,42 @@ def read_pt(filecontent):
     else:
         data = torch.load(filecontent, map_location="cpu", weights_only=False)
 
-    atomic_numbers = data["atom_types"].long()
-    cart_coords = data["coords"].float()
+    atomic_numbers = data["atom_types"].detach().clone().long()
+    cart_coords = data["coords"].detach().clone().float()
     
     total_energy = data.get("total_energy")
-    total_energy = total_energy.float()
+    total_energy = total_energy.detach().clone().float()
     
     orbital_charges_dxtb = data.get("dxtb_charges_orbital")
-    orbital_charges_dxtb = orbital_charges_dxtb.float()
+    orbital_charges_dxtb = orbital_charges_dxtb.detach().clone().float()
     
     atomic_charges_dxtb = data.get("dxtb_charges_atomic")
-    atomic_charges_dxtb = atomic_charges_dxtb.float()
+    if atomic_charges_dxtb is not None:
+        atomic_charges_dxtb = torch.zeros_like(atomic_numbers, dtype=torch.float32)
+    atomic_charges_dxtb = atomic_charges_dxtb.detach().clone().float()
     
     atomic_charges_mulliken = data.get("mulliken_charges")
-    atomic_charges_mulliken = atomic_charges_mulliken.float()
+    if atomic_charges_mulliken is not None:
+        atomic_charges_mulliken = torch.zeros_like(atomic_numbers, dtype=torch.float32)
+    atomic_charges_mulliken = atomic_charges_mulliken.detach().clone().float()
     
     atomic_charges_lowdin = data.get("lowdin_charges")
-    atomic_charges_lowdin = atomic_charges_lowdin.float()
+    if atomic_charges_lowdin is not None:
+        atomic_charges_lowdin = torch.zeros_like(atomic_numbers, dtype=torch.float32)
+    atomic_charges_lowdin = atomic_charges_lowdin.detach().clone().float()
         
     cell = torch.tensor([[100, 0, 0],
                          [0, 100, 0],
-                         [0, 0, 100]]).float()
+                         [0, 0, 100]]).detach().clone().float()
                          
     if orbital_charges_dxtb.dim() == 2:
         raise ValueError("orbital_charges_dxtb should be a 1D tensor of pre-extracted orbital blocks. Please regenerate dataset.")
+        
+    forces = data.get("forces")
+    if forces is not None:
+        forces = forces.detach().clone().float()
 
-    return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb
+    return atomic_numbers, cart_coords, cell, total_energy, orbital_charges_dxtb, atomic_charges_mulliken, atomic_charges_lowdin, atomic_charges_dxtb, forces
 
 def make_graph(
     cell,
@@ -84,6 +94,6 @@ def make_graph(
         mask, as_tuple=True
     )
     unit_shifts = repeat_offsets[shift_idx]
-    shifts = torch.matmul(unit_shifts.float(), cell)
+    shifts = torch.matmul(unit_shifts.detach().clone().float(), cell)
 
     return idx_src, idx_dst, shifts, unit_shifts

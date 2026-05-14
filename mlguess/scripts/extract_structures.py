@@ -31,6 +31,7 @@ def worker_process(args):
         "coords": torch.tensor(atoms.positions, dtype=torch.float32),
         "atom_types": torch.tensor(atoms.get_atomic_numbers(), dtype=torch.long),
         "total_energy": torch.tensor(atoms.get_total_energy(), dtype=torch.float64),
+        "forces": torch.tensor(atoms.get_forces(), dtype=torch.float32),
         "mulliken_charges": torch.tensor(atoms.info.get("mulliken_charges", []), dtype=torch.float32) if "mulliken_charges" in atoms.info else None,
         "lowdin_charges": torch.tensor(atoms.info.get("lowdin_charges", []), dtype=torch.float32) if "lowdin_charges" in atoms.info else None,
         "charge": torch.tensor(atoms.info["charge"], dtype=torch.float32),

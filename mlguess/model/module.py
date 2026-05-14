@@ -126,8 +126,14 @@ class EnergyChargesLightningModule(LightningModule):
         return corrected_charges.flatten()[mask]
     
     def forward(self, batch):
-        energy, orbital_charges, atomic_charges, _ = self.model(batch)
-        
+        out = self.model(batch)
+        if len(out) == 5:
+            energy, forces, orbital_charges, atomic_charges, _ = out
+            pred_forces = forces
+        else:
+            energy, orbital_charges, atomic_charges, _ = out
+            pred_forces = None
+            
         pred_energy = energy * self.scale_energy
         target_energy = batch.energy
         
@@ -192,15 +198,29 @@ class EnergyChargesLightningModule(LightningModule):
             self.pred_charges_diag = pred_charges
             self.target_charges_diag = target_charges
         
+        loss_coeffs = getattr(self.hparams, 'loss_coeffs', {})
+        
+        loss = 0.0
+        
         if self.hparams.target_property == 'combined':
             if self.hparams.criterion == 'mse':
                 loss_energy = (pred_energy / self.scale_energy - target_energy / self.scale_energy).pow(2).mean()
                 loss_charges = (pred_charges / scale_charges - target_charges / scale_charges).pow(2).mean()
-                loss = self.hparams.energy_loss_weight * loss_energy + self.hparams.charges_loss_weight * loss_charges
+                loss += loss_coeffs.get('energy', self.hparams.get('energy_loss_weight', 0.0)) * loss_energy
+                loss += loss_coeffs.get('charges', self.hparams.get('charges_loss_weight', 1.0)) * loss_charges
+                if pred_forces is not None and hasattr(batch, 'forces'):
+                    target_forces = batch.forces
+                    loss_forces = (pred_forces - target_forces).pow(2).mean()
+                    loss += loss_coeffs.get('forces', 0.0) * loss_forces
             elif self.hparams.criterion == 'mae':
                 loss_energy = (pred_energy / self.scale_energy - target_energy / self.scale_energy).abs().mean()
                 loss_charges = (pred_charges / scale_charges - target_charges / scale_charges).abs().mean()
-                loss = self.hparams.energy_loss_weight * loss_energy + self.hparams.charges_loss_weight * loss_charges
+                loss += loss_coeffs.get('energy', self.hparams.get('energy_loss_weight', 0.0)) * loss_energy
+                loss += loss_coeffs.get('charges', self.hparams.get('charges_loss_weight', 1.0)) * loss_charges
+                if pred_forces is not None and hasattr(batch, 'forces'):
+                    target_forces = batch.forces
+                    loss_forces = (pred_forces - target_forces).abs().mean()
+                    loss += loss_coeffs.get('forces', 0.0) * loss_forces
             else:
                 raise ValueError(f"Unsupported criterion: {self.hparams.criterion}")
         else:
@@ -212,6 +232,10 @@ class EnergyChargesLightningModule(LightningModule):
                 scale = scale_charges
                 target = target_charges
                 pred = pred_charges
+            elif self.hparams.target_property == 'forces':
+                scale = 1.0
+                target = batch.forces
+                pred = pred_forces
             
             if self.hparams.criterion == 'mse':
                 loss = (pred / scale - target / scale).pow(2).mean()
@@ -219,11 +243,13 @@ class EnergyChargesLightningModule(LightningModule):
                 loss = (pred / scale - target / scale).abs().mean()
             else:
                 raise ValueError(f"Unsupported criterion: {self.hparams.criterion}")
-            
-        return loss, pred_energy, target_energy, pred_charges, target_charges
+                
+        if pred_forces is None:
+            return loss, pred_energy, target_energy, pred_charges, target_charges, None, None
+        return loss, pred_energy, target_energy, pred_charges, target_charges, pred_forces, batch.forces
     
     def training_step(self, batch, batch_idx):        
-        loss, pred_energy, target_energy, pred_charges, target_charges = self(batch)
+        loss, pred_energy, target_energy, pred_charges, target_charges, pred_forces, target_forces = self(batch)
         
         mse_energy = (pred_energy - target_energy).pow(2).mean().item()
         mae_energy = (pred_energy - target_energy).abs().mean().item()
@@ -231,20 +257,27 @@ class EnergyChargesLightningModule(LightningModule):
         mse_charges = (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
         mae_charges = (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
         
-        self.log_dict({
+        log_dict = {
             "loss/train": loss,
             "mse/train_energy": mse_energy,
             "mae/train_energy": mae_energy,
             "mse/train_charges": mse_charges,
             "mae/train_charges": mae_charges,
-            }, 
+        }
+        
+        if pred_forces is not None and target_forces is not None:
+            log_dict["mse/train_forces"] = (pred_forces - target_forces).pow(2).mean().item()
+            log_dict["mae/train_forces"] = (pred_forces - target_forces).abs().mean().item()
+            
+        self.log_dict(
+            log_dict,
             batch_size=batch["cell"].shape[0], 
             sync_dist=self.distributed
         )   
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, pred_energy, target_energy, pred_charges, target_charges = self(batch)
+        loss, pred_energy, target_energy, pred_charges, target_charges, pred_forces, target_forces = self(batch)
         
         mse_energy = (pred_energy - target_energy).pow(2).mean().item()
         mae_energy = (pred_energy - target_energy).abs().mean().item()
@@ -252,29 +285,42 @@ class EnergyChargesLightningModule(LightningModule):
         mse_charges = (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
         mae_charges = (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
 
-        self.log_dict({
+        log_dict = {
             "loss/val": loss,
             "mse/val_energy": mse_energy,
             "mae/val_energy": mae_energy,
             "mse/val_charges": mse_charges,
             "mae/val_charges": mae_charges,
-            }, 
+        }
+        
+        if pred_forces is not None and target_forces is not None:
+            log_dict["mse/val_forces"] = (pred_forces - target_forces).pow(2).mean().item()
+            log_dict["mae/val_forces"] = (pred_forces - target_forces).abs().mean().item()
+
+        self.log_dict(
+            log_dict, 
             batch_size=batch["cell"].shape[0],
             sync_dist=self.distributed
         )
-        return {
-                    "loss": loss,
-                    "pred_charges": self.pred_charges_diag,
-                    "pred_energy": pred_energy,
-                    "target_charges": self.target_charges_diag,
-                    "target_energy": target_energy,
-                    "n_atom": batch.n_atom,
-                    "atom_types": batch.atom_types,
-                    "coords": batch.coords
-                }
+        
+        ret_dict = {
+            "loss": loss,
+            "pred_charges": self.pred_charges_diag,
+            "pred_energy": pred_energy,
+            "target_charges": self.target_charges_diag,
+            "target_energy": target_energy,
+            "n_atom": batch.n_atom,
+            "atom_types": batch.atom_types,
+            "coords": batch.coords
+        }
+        if pred_forces is not None:
+            ret_dict["pred_forces"] = pred_forces
+            ret_dict["target_forces"] = target_forces
+            
+        return ret_dict
 
     def test_step(self, batch, batch_idx):
-        loss, pred_energy, target_energy, pred_charges, target_charges = self(batch)
+        loss, pred_energy, target_energy, pred_charges, target_charges, pred_forces, target_forces = self(batch)
         
         mse_energy = (pred_energy - target_energy).pow(2).mean().item()
         mae_energy = (pred_energy - target_energy).abs().mean().item()
@@ -282,13 +328,20 @@ class EnergyChargesLightningModule(LightningModule):
         mse_charges = (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
         mae_charges = (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
 
-        self.log_dict({
+        log_dict = {
             "loss/test": loss,
             "mse/test_energy": mse_energy,
             "mae/test_energy": mae_energy,
             "mse/test_charges": mse_charges,
             "mae/test_charges": mae_charges,
-            }, 
+        }
+        
+        if pred_forces is not None and target_forces is not None:
+            log_dict["mse/test_forces"] = (pred_forces - target_forces).pow(2).mean().item()
+            log_dict["mae/test_forces"] = (pred_forces - target_forces).abs().mean().item()
+
+        self.log_dict(
+            log_dict, 
             batch_size=batch["cell"].shape[0],
             sync_dist=self.distributed
         )

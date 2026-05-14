@@ -77,6 +77,12 @@ class LmdbDataset(Dataset):
             )
             data_object = pickle.loads(datapoint_pickled)
 
+        # Ensure all tensors are detached to prevent autograd cross-process errors during collation
+        import torch
+        for key, value in data_object:
+            if isinstance(value, torch.Tensor) and value.requires_grad:
+                setattr(data_object, key, value.detach())
+
         return data_object
 
     def get_metadata(self, num_samples):

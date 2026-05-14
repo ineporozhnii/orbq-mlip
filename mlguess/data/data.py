@@ -58,6 +58,7 @@ class AtomicData(Data):
         atomic_charges_mulliken, 
         atomic_charges_lowdin, 
         atomic_charges_dxtb,
+        forces,
         metadata: str,
         z_table: AtomicNumberTable,
         atom_cutoff: float = 5.0,
@@ -99,6 +100,7 @@ class AtomicData(Data):
             atomic_charges_mulliken=atomic_charges_mulliken,
             atomic_charges_lowdin=atomic_charges_lowdin,
             atomic_charges_dxtb=atomic_charges_dxtb,
+            forces=forces,
             metadata=metadata
         )
         return cls(**data_dict)
