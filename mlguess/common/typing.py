@@ -2,6 +2,7 @@
 adapted from:
 https://github.com/Open-Catalyst-Project/ocp/blob/main/ocpmodels/common/typing.py
 """
+
 from typing import Optional, Type, TypeVar
 
 _T = TypeVar("_T")

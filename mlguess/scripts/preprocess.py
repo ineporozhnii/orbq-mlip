@@ -22,6 +22,7 @@ def get_atomic_number_table_from_zs(zs) -> AtomicNumberTable:
         z_set.add(z)
     return AtomicNumberTable(sorted(list(z_set)))
 
+
 def decompress_tarmember(tar, tarinfo):
     """Extract compressed tar file member and return a bytes object with the content"""
     bytesobj = tar.extractfile(tarinfo).read()
@@ -38,6 +39,7 @@ def decompress_tarmember(tar, tarinfo):
 
     return filecontent
 
+
 def process_tar_file_to_lmdb(mp_arg):
     z_table, tarpath, db_path, pid, idx, args = mp_arg
     n_device = torch.cuda.device_count()
@@ -51,9 +53,11 @@ def process_tar_file_to_lmdb(mp_arg):
     )
 
     member_list = []
-    read_cfg = "r:gz" if tarpath.parts[-1].endswith('.gz') else "r:"
+    read_cfg = "r:gz" if tarpath.parts[-1].endswith(".gz") else "r:"
     with tarfile.open(tarpath, read_cfg) as tar:
-        for member in tqdm(tar.getmembers(), position=pid, desc=f"processing job {pid} on {device}"):
+        for member in tqdm(
+            tar.getmembers(), position=pid, desc=f"processing job {pid} on {device}"
+        ):
             # Skip if the member is not a file
             if not member.isfile():
                 continue
@@ -89,6 +93,7 @@ def process_tar_file_to_lmdb(mp_arg):
 
     return idx
 
+
 def main_tar(args: argparse.Namespace) -> None:
     tar_files = sorted(list(Path(args.data_path).glob("*.tar*")))
     os.makedirs(os.path.join(args.out_path), exist_ok=True)
@@ -113,6 +118,7 @@ def main_tar(args: argparse.Namespace) -> None:
         for i in range(len(tar_files))
     ]
     list([*pool.imap(process_tar_file_to_lmdb, mp_args)])
+
 
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()

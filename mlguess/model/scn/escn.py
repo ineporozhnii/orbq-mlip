@@ -4,7 +4,7 @@ Copyright (c) Meta, Inc. and its affiliates.
 This source code is licensed under the MIT license found in the
 LICENSE file in the root directory of this source tree.
 
-Adapted from: 
+Adapted from:
 https://github.com/FAIR-Chem/fairchem/tree/main/src/fairchem/core/models/scn
 """
 
@@ -31,7 +31,14 @@ from mlguess.model.scn.smearing import (
 from mlguess.model.scn.sampling import CalcSpherePoints
 
 from e3nn import o3
-from e3nn.o3 import ReducedTensorProducts, Irrep, Irreps, Linear, FullyConnectedTensorProduct
+from e3nn.o3 import (
+    ReducedTensorProducts,
+    Irrep,
+    Irreps,
+    Linear,
+    FullyConnectedTensorProduct,
+)
+
 
 class eSCN(nn.Module):
     """Equivariant Spherical Channel Network
@@ -71,7 +78,8 @@ class eSCN(nn.Module):
         distance_resolution: float = 0.02,
         show_timing_info: bool = False,
         regress_forces: bool = False,
-        *args, **kwargs
+        *args,
+        **kwargs,
     ) -> None:
         super().__init__()
         self.regress_forces = regress_forces
@@ -88,9 +96,7 @@ class eSCN(nn.Module):
         self.lmax_list = lmax_list
         self.mmax_list = mmax_list
         self.num_resolutions: int = len(self.lmax_list)
-        self.sphere_channels_all: int = (
-            self.num_resolutions * self.sphere_channels
-        )
+        self.sphere_channels_all: int = self.num_resolutions * self.sphere_channels
         self.basis_width_scalar = basis_width_scalar
         self.distance_function = distance_function
         self.device = torch.cuda.current_device()
@@ -168,30 +174,28 @@ class eSCN(nn.Module):
                 self.act,
             )
             self.layer_blocks.append(block)
-            
+
         self.max_n_orbitals_per_L = max_n_orbitals_per_L
-        
+
         L_max = max(self.lmax_list)
         irreps_in_list = []
         for l in range(L_max + 1):
-            parity = 'e' if l % 2 == 0 else 'o'
+            parity = "e" if l % 2 == 0 else "o"
             irreps_in_list.append(f"{self.sphere_channels}x{l}{parity}")
-        
+
         irreps_in = " + ".join(irreps_in_list)
 
         self.use_equivariant_predictor = True
 
         if self.use_equivariant_predictor:
             self.lin_out = EquivariantPopulationPredictor(
-                irreps_in, 
-                max_n_orbitals_per_L=self.max_n_orbitals_per_L
+                irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L
             )
         else:
             self.lin_out = InvariantPopulationPredictor(
-                irreps_in, 
-                max_n_orbitals_per_L=self.max_n_orbitals_per_L
+                irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L
             )
-        
+
         self.energy_block = EnergyBlock(
             self.sphere_channels_all, self.num_sphere_samples, self.act
         )
@@ -199,18 +203,18 @@ class eSCN(nn.Module):
             self.force_block = ForceBlock(
                 self.sphere_channels_all, self.num_sphere_samples, self.act
             )
-        
+
         self.atomic_charge_block = AtomicChargeBlock(
             self.sphere_channels_all, self.num_sphere_samples, self.act
         )
-        
+
         # self.atomic_charge_lin = o3.Linear(irreps_in=irreps_in, irreps_out="1x0e")
-        
+
         # Create a roughly evenly distributed point sampling of the sphere for the output blocks
         self.sphere_points = CalcSpherePoints(
             self.num_sphere_samples, self.device
         ).detach()
-        
+
         # For each spherical point, compute the spherical harmonic coefficient weights
         self.sphharm_weights = []
         for i in range(self.num_resolutions):
@@ -221,8 +225,7 @@ class eSCN(nn.Module):
                     False,
                 ).detach()
             )
- 
-        
+
     def forward(self, data):
         device = data.coords.device
         self.batch_size = len(data.cell)
@@ -231,7 +234,7 @@ class eSCN(nn.Module):
         num_atoms = len(atomic_numbers)
 
         start_time = time.time()
-        
+
         edge_index = data["edge_index"]
         edge_distance_vec, edge_distance = get_edge_vectors_and_lengths(
             positions=data["coords"],
@@ -251,9 +254,7 @@ class eSCN(nn.Module):
         # Initialize the WignerD matrices and other values for spherical harmonic calculations
         self.SO3_edge_rot = nn.ModuleList()
         for i in range(self.num_resolutions):
-            self.SO3_edge_rot.append(
-                SO3_Rotation(edge_rot_mat, self.lmax_list[i])
-            )
+            self.SO3_edge_rot.append(SO3_Rotation(edge_rot_mat, self.lmax_list[i]))
 
         ###############################################################
         # Initialize node embeddings
@@ -273,16 +274,14 @@ class eSCN(nn.Module):
         offset = 0
         # Initialize the l=0,m=0 coefficients for each resolution
         for i in range(self.num_resolutions):
-            x.embedding[:, offset_res, :] = self.sphere_embedding(
-                atomic_numbers
-            )[:, offset : offset + self.sphere_channels]
+            x.embedding[:, offset_res, :] = self.sphere_embedding(atomic_numbers)[
+                :, offset : offset + self.sphere_channels
+            ]
             offset = offset + self.sphere_channels
             offset_res = offset_res + int((self.lmax_list[i] + 1) ** 2)
 
         # This can be expensive to compute (not implemented efficiently), so only do it once and pass it along to each layer
-        mappingReduced = CoefficientMapping(
-            self.lmax_list, self.mmax_list, device
-        )
+        mappingReduced = CoefficientMapping(self.lmax_list, self.mmax_list, device)
 
         ###############################################################
         # Update spherical node embeddings
@@ -311,11 +310,11 @@ class eSCN(nn.Module):
                     self.SO3_edge_rot,
                     mappingReduced,
                 )
-                        
+
         ###############################################################
         # Predicts orbital charges
         ###############################################################
-        
+
         x_emb_native = x.embedding
         node_emb = x_emb_native[:, 0, :]
 
@@ -324,14 +323,18 @@ class eSCN(nn.Module):
         L_max = max(self.lmax_list)
         for l_val in range(L_max + 1):
             num_m_components = (2 * l_val) + 1
-            l_block_native = x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
+            l_block_native = x_emb_native[
+                :, current_lm_idx : current_lm_idx + num_m_components, :
+            ]
             l_block_e3nn_ordered = l_block_native.permute(0, 2, 1).contiguous()
-            e3nn_input_parts.append(l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1))
+            e3nn_input_parts.append(
+                l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1)
+            )
             current_lm_idx += num_m_components
 
         x_pt_for_e3nn = torch.cat(e3nn_input_parts, dim=1)
         orbital_charges = self.lin_out(x_pt_for_e3nn)
-        
+
         # Sample the spherical channels (node embeddings) at evenly distributed points on the sphere.
         # These values are fed into the output blocks.
         x_pt_energy = torch.tensor([], device=device)
@@ -353,25 +356,24 @@ class eSCN(nn.Module):
             offset = offset + num_coefficients
 
         x_pt_energy = x_pt_energy.view(-1, self.sphere_channels_all)
-        
+
         ###############################################################
         # Energy prediction
         ###############################################################
         node_energy = self.energy_block(x_pt_energy)
         energy = torch.zeros(len(data.n_atom), device=device)
         energy.index_add_(0, data.batch, node_energy.view(-1))
-        
+
         ################################################################
         # Atomic Charge prediction
         ################################################################
         node_charges = self.atomic_charge_block(x_pt_energy).flatten()
-        
+
         if getattr(self, "regress_forces", False):
             forces = self.force_block(x_pt_energy, self.sphere_points)
             return energy, forces, orbital_charges, node_charges, node_emb
         else:
             return energy, orbital_charges, node_charges, node_emb
-    
 
     # Initialize the edge rotation matrices
     def _init_edge_rot_mat(self, data, edge_index, edge_distance_vec):
@@ -381,12 +383,12 @@ class eSCN(nn.Module):
 
         # edge_distance_vec are the raw edge vectors r_j - r_i
         edge_lengths = torch.norm(edge_distance_vec, p=2, dim=1, keepdim=True)
-        
+
         # Normalized edge vector, this will be our local Z-axis
         axis_z = edge_distance_vec / (edge_lengths + norm_eps)
         world_z_torch = torch.tensor([0.0, 0.0, 1.0], device=device, dtype=dtype)
         world_x_torch = torch.tensor([1.0, 0.0, 0.0], device=device, dtype=dtype)
-        
+
         # Expand world vectors to match batch size of axis_z
         world_z_vec = world_z_torch.expand_as(axis_z)
         world_x_vec = world_x_torch.expand_as(axis_z)
@@ -394,20 +396,22 @@ class eSCN(nn.Module):
         dot_with_world_z = torch.sum(axis_z * world_z_vec, dim=1, keepdim=True)
 
         ref_vec_for_y = torch.where(
-            torch.abs(dot_with_world_z) >= (1.0 - norm_eps), # If aligned with world_z
-            world_x_vec, # Use world_x
-            world_z_vec  # Else use world_z
+            torch.abs(dot_with_world_z) >= (1.0 - norm_eps),  # If aligned with world_z
+            world_x_vec,  # Use world_x
+            world_z_vec,  # Else use world_z
         )
-        
-        axis_y = -torch.cross(ref_vec_for_y, axis_z, dim=1) # Swapped order to get Y before X
+
+        axis_y = -torch.cross(
+            ref_vec_for_y, axis_z, dim=1
+        )  # Swapped order to get Y before X
         axis_y = axis_y / (torch.norm(axis_y, p=2, dim=1, keepdim=True) + norm_eps)
 
-        axis_x = torch.cross(axis_y, axis_z, dim=1) # axis_y x axis_z = axis_x
+        axis_x = torch.cross(axis_y, axis_z, dim=1)  # axis_y x axis_z = axis_x
 
         # Columns of edge_rot_mat_inv are axis_x, axis_y, axis_z
         edge_rot_mat_inv = torch.stack([axis_x, axis_y, axis_z], dim=2)
         edge_rot_mat = torch.transpose(edge_rot_mat_inv, 1, 2).contiguous()
-        
+
         # RETURN DIRECTLY - Do not permute the geometric coordinate frame
         return edge_rot_mat.detach()
 
@@ -672,18 +676,12 @@ class SO2Block(torch.nn.Module):
         num_channels_m0 = 0
         for i in range(self.num_resolutions):
             num_coefficents = self.lmax_list[i] + 1
-            num_channels_m0 = (
-                num_channels_m0 + num_coefficents * self.sphere_channels
-            )
+            num_channels_m0 = num_channels_m0 + num_coefficents * self.sphere_channels
 
         # SO(2) convolution for m=0
         self.fc1_dist0 = nn.Linear(edge_channels, self.hidden_channels)
-        self.fc1_m0 = nn.Linear(
-            num_channels_m0, self.hidden_channels, bias=False
-        )
-        self.fc2_m0 = nn.Linear(
-            self.hidden_channels, num_channels_m0, bias=False
-        )
+        self.fc1_m0 = nn.Linear(num_channels_m0, self.hidden_channels, bias=False)
+        self.fc2_m0 = nn.Linear(self.hidden_channels, num_channels_m0, bias=False)
 
         # SO(2) convolution for non-zero m
         self.so2_conv = nn.ModuleList()
@@ -737,9 +735,7 @@ class SO2Block(torch.nn.Module):
             # Perform SO(2) convolution
             x_m = self.so2_conv[m - 1](x_m, x_edge)
             x_m = x_m.view(num_edges, -1, x.num_channels)
-            x.embedding[
-                :, offset : offset + 2 * mappingReduced.m_size[m]
-            ] = x_m
+            x.embedding[:, offset : offset + 2 * mappingReduced.m_size[m]] = x_m
 
             offset = offset + 2 * mappingReduced.m_size[m]
 
@@ -788,9 +784,7 @@ class SO2Conv(torch.nn.Module):
             if self.mmax_list[i] >= m:
                 num_coefficents = self.lmax_list[i] - m + 1
 
-            num_channels = (
-                num_channels + num_coefficents * self.sphere_channels
-            )
+            num_channels = num_channels + num_coefficents * self.sphere_channels
 
         assert num_channels > 0
 
@@ -798,11 +792,11 @@ class SO2Conv(torch.nn.Module):
         self.fc1_dist = nn.Linear(edge_channels, 2 * self.hidden_channels)
 
         # Real weights of SO(2) convolution
-        self.fc1_r = nn.Linear(num_channels, self.hidden_channels, bias=True) # True 
+        self.fc1_r = nn.Linear(num_channels, self.hidden_channels, bias=True)  # True
         self.fc2_r = nn.Linear(self.hidden_channels, num_channels, bias=False)
 
         # Imaginary weights of SO(2) convolution
-        self.fc1_i = nn.Linear(num_channels, self.hidden_channels, bias=True) # True 
+        self.fc1_i = nn.Linear(num_channels, self.hidden_channels, bias=True)  # True
         self.fc2_i = nn.Linear(self.hidden_channels, num_channels, bias=False)
 
     def forward(self, x_m, x_edge) -> torch.Tensor:
@@ -854,12 +848,8 @@ class EdgeBlock(torch.nn.Module):
         self.fc1_dist = nn.Linear(self.in_channels, self.edge_channels)
 
         # Embedding function of the atomic numbers
-        self.source_embedding = nn.Embedding(
-            self.max_num_elements, self.edge_channels
-        )
-        self.target_embedding = nn.Embedding(
-            self.max_num_elements, self.edge_channels
-        )
+        self.source_embedding = nn.Embedding(self.max_num_elements, self.edge_channels)
+        self.target_embedding = nn.Embedding(self.max_num_elements, self.edge_channels)
         nn.init.uniform_(self.source_embedding.weight.data, -0.001, 0.001)
         nn.init.uniform_(self.target_embedding.weight.data, -0.001, 0.001)
 
@@ -883,7 +873,7 @@ class EdgeBlock(torch.nn.Module):
         x_edge = self.act(self.fc1_edge_attr(x_edge))
 
         return x_edge
-    
+
 
 class EnergyBlock(torch.nn.Module):
     """
@@ -956,8 +946,6 @@ class AtomicChargeBlock(torch.nn.Module):
         node_charge = torch.sum(x_pt, dim=1) / self.num_sphere_samples
 
         return node_charge
-    
-
 
 
 class ForceBlock(torch.nn.Module):
@@ -979,75 +967,92 @@ class ForceBlock(torch.nn.Module):
         forces = torch.sum(forces, dim=1) / self.num_sphere_samples
         return forces
 
+
 class EquivariantPopulationPredictor(nn.Module):
     def __init__(self, irreps_in, max_n_orbitals_per_L):
         super().__init__()
         self.irreps_in = Irreps(irreps_in)
-        
+
         self.n_s = int(max_n_orbitals_per_L[0]) if len(max_n_orbitals_per_L) > 0 else 0
         self.n_p = int(max_n_orbitals_per_L[1]) if len(max_n_orbitals_per_L) > 1 else 0
         self.n_d = int(max_n_orbitals_per_L[2]) if len(max_n_orbitals_per_L) > 2 else 0
-        
+
         # --- REGISTER DXTB TRANSFORMATION MATRIX ---
         # Decoded via Overlap Matrix (S) optimization.
-        C_matrix = torch.tensor([
-            [ 0.0000,  1.3376,  0.0000,  0.0000,  0.0000],
-            [ 0.0000,  0.0000,  0.0000,  1.3376,  0.0000],
-            [ 0.0000,  0.0000, -0.6688,  0.0000,  1.1584],
-            [ 1.3376,  0.0000,  0.0000,  0.0000,  0.0000],
-            [ 0.0000,  0.0000, -1.1584,  0.0000, -0.6688]
-        ], dtype=torch.float32)
+        C_matrix = torch.tensor(
+            [
+                [0.0000, 1.3376, 0.0000, 0.0000, 0.0000],
+                [0.0000, 0.0000, 0.0000, 1.3376, 0.0000],
+                [0.0000, 0.0000, -0.6688, 0.0000, 1.1584],
+                [1.3376, 0.0000, 0.0000, 0.0000, 0.0000],
+                [0.0000, 0.0000, -1.1584, 0.0000, -0.6688],
+            ],
+            dtype=torch.float32,
+        )
         self.register_buffer("C_dxtb", C_matrix)
         # -------------------------------------------
 
         if self.n_s > 0:
             self.predict_s = Linear(self.irreps_in, f"{self.n_s}x0e")
-        
+
         if self.n_p > 0:
-            self.rtp_p = ReducedTensorProducts('ij', i='1o', j='1o')
-            self.predict_p = nn.ModuleList([
-                Linear(self.irreps_in, self.rtp_p.irreps_out) for _ in range(self.n_p)
-            ])
-        
+            self.rtp_p = ReducedTensorProducts("ij", i="1o", j="1o")
+            self.predict_p = nn.ModuleList(
+                [Linear(self.irreps_in, self.rtp_p.irreps_out) for _ in range(self.n_p)]
+            )
+
         if self.n_d > 0:
-            self.rtp_d = ReducedTensorProducts('ij', i='2e', j='2e')
+            self.rtp_d = ReducedTensorProducts("ij", i="2e", j="2e")
             l_max_in = max([l for _, (l, p) in self.irreps_in])
-            self.needs_tp = (l_max_in < 4) # Will evaluate to True for Lmax=2
-            
+            self.needs_tp = l_max_in < 4  # Will evaluate to True for Lmax=2
+
             if self.needs_tp:
                 # Use a lightweight bottleneck to keep the quadratic tensor product fast
                 bottleneck = "16x0e + 16x1o + 16x2e"
                 self.proj_down = Linear(self.irreps_in, bottleneck)
-                
+
                 # LINEAR BYPASS: Learn the population trace (0e) and base shapes (2e) linearly
-                self.predict_d_lin = nn.ModuleList([
-                    Linear(self.irreps_in, "1x0e + 1x1e + 1x2e") for _ in range(self.n_d)
-                ])
+                self.predict_d_lin = nn.ModuleList(
+                    [
+                        Linear(self.irreps_in, "1x0e + 1x1e + 1x2e")
+                        for _ in range(self.n_d)
+                    ]
+                )
                 # QUADRATIC PATH: Synthesize the missing 4e components via Tensor Product
-                self.predict_d_tp = nn.ModuleList([
-                    FullyConnectedTensorProduct(bottleneck, bottleneck, "1x3e + 1x4e") for _ in range(self.n_d)
-                ])
+                self.predict_d_tp = nn.ModuleList(
+                    [
+                        FullyConnectedTensorProduct(
+                            bottleneck, bottleneck, "1x3e + 1x4e"
+                        )
+                        for _ in range(self.n_d)
+                    ]
+                )
             else:
-                self.predict_d = nn.ModuleList([
-                    Linear(self.irreps_in, self.rtp_d.irreps_out) for _ in range(self.n_d)
-                ])
+                self.predict_d = nn.ModuleList(
+                    [
+                        Linear(self.irreps_in, self.rtp_d.irreps_out)
+                        for _ in range(self.n_d)
+                    ]
+                )
 
     def forward(self, x):
         outputs = []
-        
+
         if self.n_s > 0:
             outputs.append(self.predict_s(x))
-            
+
         if self.n_p > 0:
             for lin in self.predict_p:
                 p_tensor = lin(x)
-                p_matrix = torch.einsum('nc, cij -> nij', p_tensor, self.rtp_p.change_of_basis.to(x.device))
+                p_matrix = torch.einsum(
+                    "nc, cij -> nij", p_tensor, self.rtp_p.change_of_basis.to(x.device)
+                )
                 outputs.append(p_matrix.flatten(start_dim=1))
-                
+
         if self.n_d > 0:
             if self.needs_tp:
                 x_proj = self.proj_down(x)
-                
+
             for i in range(self.n_d):
                 if self.needs_tp:
                     d_tensor_lin = self.predict_d_lin[i](x)
@@ -1056,40 +1061,44 @@ class EquivariantPopulationPredictor(nn.Module):
                     d_tensor = torch.cat([d_tensor_lin, d_tensor_tp], dim=1)
                 else:
                     d_tensor = self.predict_d[i](x)
-                    
+
                 # 1. Reconstruct e3nn's native 5x5 symmetric matrix
-                d_matrix_e3nn = torch.einsum('nc, cij -> nij', d_tensor, self.rtp_d.change_of_basis.to(x.device))
-                
+                d_matrix_e3nn = torch.einsum(
+                    "nc, cij -> nij", d_tensor, self.rtp_d.change_of_basis.to(x.device)
+                )
+
                 # 2. Match mixed-precision dtypes
                 C = self.C_dxtb.type_as(d_matrix_e3nn)
-                
+
                 # 3. Apply the Cartesian transformation: M_dxtb = C * M_e3nn * C^T
                 C_inv = torch.linalg.inv(C)
                 d_matrix_dxtb = C @ d_matrix_e3nn @ C_inv
-                
+
                 # 4. Extract the exact equivariant populations!
                 pop_d_dxtb = d_matrix_dxtb.flatten(start_dim=1)
                 outputs.append(pop_d_dxtb)
-                
+
         return torch.cat(outputs, dim=1)
-    
+
 
 class InvariantPopulationPredictor(nn.Module):
     def __init__(self, irreps_in, max_n_orbitals_per_L):
         super().__init__()
         self.irreps_in = Irreps(irreps_in)
-        
+
         self.n_s = int(max_n_orbitals_per_L[0]) if len(max_n_orbitals_per_L) > 0 else 0
         self.n_p = int(max_n_orbitals_per_L[1]) if len(max_n_orbitals_per_L) > 1 else 0
         self.n_d = int(max_n_orbitals_per_L[2]) if len(max_n_orbitals_per_L) > 2 else 0
-        
+
         # Calculate the total number of individual orbital charges required by the basis set.
         # s-shell = 1 scalar, p-shell = 9 scalars (3x3), d-shell = 25 scalars (5x5)
         self.total_scalar_outputs = self.n_s + (self.n_p * 9) + (self.n_d * 25)
-        
+
         # e3nn's Linear automatically maps the 0e inputs to 0e outputs.
         # It rigorously zeroes out any connection to the 1o, 2e, 3o, and 4e features.
-        self.predict_invariant = Linear(self.irreps_in, f"{self.total_scalar_outputs}x0e")
+        self.predict_invariant = Linear(
+            self.irreps_in, f"{self.total_scalar_outputs}x0e"
+        )
 
     def forward(self, x):
         # x contains the full geometric embedding.

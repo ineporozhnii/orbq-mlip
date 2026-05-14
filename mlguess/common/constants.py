@@ -1,4 +1,3 @@
-
 bohr2ang = 0.529177
 
 COVALENT_RADII = {

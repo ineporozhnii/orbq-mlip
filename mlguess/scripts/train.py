@@ -18,12 +18,14 @@ from mlguess.common.system import log_hyperparameters, PROJECT_ROOT
 
 # NOTE: disable slurm detection of lightning
 from lightning.pytorch.plugins.environments import SLURMEnvironment
+
 SLURMEnvironment.detect = lambda: False
 
 pylogger = logging.getLogger(__name__)
 
 torch.set_float32_matmul_precision("high")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
 
 def build_callbacks(cfg: ListConfig, *args: Callback) -> List[Callback]:
     """Instantiate the callbacks given their configuration.
@@ -62,7 +64,7 @@ def run(cfg: DictConfig) -> str:
         cfg.data, _recursive_=False
     )
     datamodule.setup(stage="fit")
-        
+
     metadata = getattr(datamodule, "metadata", None)
     if metadata is None:
         pylogger.warning(
@@ -72,7 +74,10 @@ def run(cfg: DictConfig) -> str:
     # Instantiate model
     pylogger.info(f"Instantiating <{cfg.model['_target_']}>")
     model: pl.LightningModule = hydra.utils.instantiate(
-        cfg.model, train=cfg.train, _recursive_=False, metadata=metadata,
+        cfg.model,
+        train=cfg.train,
+        _recursive_=False,
+        metadata=metadata,
     )
 
     callbacks: List[Callback] = build_callbacks(cfg.train.callbacks)
@@ -95,8 +100,8 @@ def run(cfg: DictConfig) -> str:
             f"TensorBoard Logger logs into <{cfg.train.logging.tensorboard.save_dir}>."
         )
 
-    ckpt = None    
-    
+    ckpt = None
+
     trainer = pl.Trainer(
         default_root_dir=storage_dir,
         logger=logger,
@@ -111,12 +116,13 @@ def run(cfg: DictConfig) -> str:
     log_hyperparameters(cfg, model, trainer)
     with open(Path(storage_dir) / "metadata.json", "w") as f:
         json.dump(metadata, f)
-    
-    if (Path(storage_dir) / 'last.ckpt').exists():
-        ckpt = Path(storage_dir) / 'last.ckpt'
+
+    if (Path(storage_dir) / "last.ckpt").exists():
+        ckpt = Path(storage_dir) / "last.ckpt"
         pylogger.info(f"found checkpoint: {ckpt}")
     else:
         import numpy as np
+
         ckpts = list(Path(storage_dir).glob("*epoch*.ckpt"))
         if len(ckpts) > 0:
             ckpt_epochs = np.array(
@@ -126,10 +132,13 @@ def run(cfg: DictConfig) -> str:
             ckpt = str(ckpts[ckpt_ix])
         else:
             ckpt = None
-            
+
     pylogger.info("starting training.")
     trainer.fit(
-        model, datamodule.train_dataloader(), datamodule.val_dataloader(), ckpt_path=ckpt
+        model,
+        datamodule.train_dataloader(),
+        datamodule.val_dataloader(),
+        ckpt_path=ckpt,
     )
 
     if (
@@ -144,7 +153,11 @@ def run(cfg: DictConfig) -> str:
         logger.experiment.finish()
 
 
-@hydra.main(config_path=str(PROJECT_ROOT / "mlguess" / "config"), config_name="default", version_base="1.1")
+@hydra.main(
+    config_path=str(PROJECT_ROOT / "mlguess" / "config"),
+    config_name="default",
+    version_base="1.1",
+)
 def main(cfg: omegaconf.DictConfig):
     run(cfg)
 

@@ -81,6 +81,7 @@ def load_envs(env_file: Optional[str] = ".env") -> None:
 
 STATS_KEY: str = "stats"
 
+
 # Adapted from https://github.com/hobogalaxy/lightning-hydra-template/blob/6bf03035107e12568e3e576e82f83da0f91d6a11/src/utils/template_utils.py#L125
 def log_hyperparameters(
     cfg: DictConfig,

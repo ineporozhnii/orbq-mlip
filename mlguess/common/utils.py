@@ -5,11 +5,13 @@ import torch
 # NOTE: future versions could consider more supercells.
 SUPERCELLS = torch.FloatTensor(list(itertools.product((-1, 0, 1), repeat=3)))
 
+
 def scatter(src: torch.Tensor, index: torch.Tensor, dim_size: int) -> torch.Tensor:
     # special case of torch_scatter.scatter with dim=0
     out = src.new_zeros(dim_size, *src.shape[1:])
-    index = index.reshape(-1, *([1]*(len(src.shape)-1))).expand_as(src)
+    index = index.reshape(-1, *([1] * (len(src.shape) - 1))).expand_as(src)
     return out.scatter_add_(0, index, src)
+
 
 def get_edge_vectors_and_lengths(
     positions: torch.Tensor,  # [n_nodes, 3]
@@ -28,8 +30,10 @@ def get_edge_vectors_and_lengths(
 
     return vectors, lengths
 
+
 def frac2cart(fcoord, cell):
     return fcoord @ cell
+
 
 def cart2frac(coord, cell):
     invcell = torch.linalg.inv(cell)

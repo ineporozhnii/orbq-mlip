@@ -14,8 +14,10 @@ from .data import Data
 
 IndexType = Union[slice, Tensor, np.ndarray, Sequence]
 
+
 def makedirs(dir):
     os.makedirs(dir, exist_ok=True)
+
 
 class Dataset(torch.utils.data.Dataset):
     r"""Dataset base class for creating graph datasets.

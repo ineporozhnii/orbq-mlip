@@ -19,50 +19,53 @@ from mlguess.model.module import EnergyChargesLightningModule
 pylogger = logging.getLogger(__name__)
 
 torch.set_float32_matmul_precision("high")
-#os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
-    
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+
+
 def main(
     ckpt_path,
     data_path,
     split_file,
-    tag='test',
+    tag="test",
     max_n_graphs=10000,
     batch_size=4,
     use_last=False,
     run_name=None,
     save_emb=False,
-    ):
+):
     seed_everything(42)
     ckpt_path = Path(ckpt_path)
-    
-    log_name = f'eval_{tag}.log' if run_name is None else f'eval_{tag}_{run_name}.log'
-    
+
+    log_name = f"eval_{tag}.log" if run_name is None else f"eval_{tag}_{run_name}.log"
+
     # Configure logging
-    logging.basicConfig(level=logging.DEBUG,
-                format='%(asctime)s - %(levelname)s - %(message)s',
-                datefmt='%m/%d/%Y %I:%M:%S %p',
-                filename=ckpt_path / log_name,
-                filemode='w')
-        
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%m/%d/%Y %I:%M:%S %p",
+        filename=ckpt_path / log_name,
+        filemode="w",
+    )
+
     cfg = omegaconf.OmegaConf.load(ckpt_path / "config.yaml")
-    
+
     # set up data loader
     dataset = LmdbDataset(data_path)
     with open(split_file, "r") as fp:
         splits = json.load(fp)
     test_dataset = Subset(dataset, splits[tag])
     test_loader = DataLoader(
-        test_dataset, 
-        batch_size=batch_size, 
-        shuffle=False, 
-        num_workers=8, 
-        worker_init_fn=worker_init_fn
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=8,
+        worker_init_fn=worker_init_fn,
     )
 
     # load checkpoint
     storage_dir: str = Path(ckpt_path)
-    if (storage_dir / 'last.ckpt').exists() and use_last:
-        ckpt = storage_dir / 'last.ckpt'
+    if (storage_dir / "last.ckpt").exists() and use_last:
+        ckpt = storage_dir / "last.ckpt"
     else:
         ckpts = list(storage_dir.glob("*epoch*.ckpt"))
         if len(ckpts) > 0:
@@ -73,35 +76,42 @@ def main(
             ckpt = str(ckpts[ckpt_ix])
         else:
             raise FileNotFoundError(f"No checkpoint found in <{ckpt_path}>.")
-    
+
     # pylint: disable=E1120
     print(f"Loading checkpoint from {ckpt}")
     pylogger.info(f"loaded checkpoint: {ckpt}")
-    model = EnergyChargesLightningModule.load_from_checkpoint(checkpoint_path=ckpt).to('cuda')
+    model = EnergyChargesLightningModule.load_from_checkpoint(checkpoint_path=ckpt).to(
+        "cuda"
+    )
     model.eval()
     model.ema.copy_to(model.parameters())
-    
-    # Better load balancing possible.
-    pylogger.info("starting testing.")    
-    txt_name = f'nmape_{tag}.txt' if run_name is None else f'nmape_{tag}_{run_name}.txt'
 
-    with(torch.no_grad(),
-         contextlib.ExitStack() as context_stack, 
-         open(storage_dir / txt_name, 'w') as f
-        ):
-                
-        prog = context_stack.enter_context(tqdm(total=min(max_n_graphs, len(test_dataset)), disable=None))
+    # Better load balancing possible.
+    pylogger.info("starting testing.")
+    txt_name = f"nmape_{tag}.txt" if run_name is None else f"nmape_{tag}_{run_name}.txt"
+
+    with (
+        torch.no_grad(),
+        contextlib.ExitStack() as context_stack,
+        open(storage_dir / txt_name, "w") as f,
+    ):
+
+        prog = context_stack.enter_context(
+            tqdm(total=min(max_n_graphs, len(test_dataset)), disable=None)
+        )
         display_bar = context_stack.enter_context(
-                tqdm(
-                    bar_format=""
+            tqdm(
+                bar_format=(
+                    ""
                     if prog.disable  # prog.ncols doesn't exist if disabled
-                    else ("{desc:." + str(prog.ncols) + "}"),
-                    disable=None,
-                )
+                    else ("{desc:." + str(prog.ncols) + "}")
+                ),
+                disable=None,
             )
+        )
 
         curr_time = time.time()
-        
+
         metadata_list = []
         n_atom = []
         atom_types = []
@@ -112,25 +122,25 @@ def main(
         ground_truth_charges = []
         atomic_embeddings = []
         for batch in test_loader:
-            batch = batch.to('cuda')
+            batch = batch.to("cuda")
             energy, orbital_charges, atomic_charges, atomic_emb = model.model(batch)
-            
-            if model.hparams.charges_type == 'orbital_dxtb':
+
+            if model.hparams.charges_type == "orbital_dxtb":
                 target_charges = batch.orbital_charges_dxtb
-                pred_charges = model.orbital_charge_correction(batch, orbital_charges) 
-            elif model.hparams.charges_type == 'atomic_dxtb':
+                pred_charges = model.orbital_charge_correction(batch, orbital_charges)
+            elif model.hparams.charges_type == "atomic_dxtb":
                 target_charges = batch.atomic_charges_dxtb
-                pred_charges = atomic_charges   
-            elif model.hparams.charges_type == 'atomic_lowdin':
+                pred_charges = atomic_charges
+            elif model.hparams.charges_type == "atomic_lowdin":
                 target_charges = batch.atomic_charges_lowdin
                 pred_charges = atomic_charges
-            elif model.hparams.charges_type == 'atomic_mulliken':
+            elif model.hparams.charges_type == "atomic_mulliken":
                 target_charges = batch.atomic_charges_mulliken
                 pred_charges = atomic_charges
             else:
                 target_charges = torch.zeros_like(batch.atom_types)
                 pred_charges = torch.zeros_like(batch.atom_types)
-                
+
             n_atom.extend(batch["n_atom"].detach().cpu())
             atom_types.extend(batch["atom_types"].detach().cpu())
             coords.extend(batch["coords"].detach().cpu())
@@ -141,10 +151,10 @@ def main(
             if save_emb:
                 atomic_embeddings.extend(atomic_emb.detach().cpu())
             metadata_list.extend(batch.metadata)
-            prog.update(batch["n_atom"].shape[0])        
+            prog.update(batch["n_atom"].shape[0])
         elapsed_time = time.time() - curr_time
         pylogger.info(f"elapsed time: {elapsed_time:.2f} seconds.")
-        
+
         n_atom = torch.tensor(n_atom)
         atom_types = torch.tensor(atom_types)
         predictions_energy = torch.tensor(predictions_energy)
@@ -152,27 +162,31 @@ def main(
         coords = torch.cat(coords)
         predictions_charges = torch.tensor(predictions_charges)
         ground_truth_charges = torch.tensor(ground_truth_charges)
-        
+
         base_name = f"{tag}_{model.hparams.charges_type}_results"
         if run_name is not None:
-             base_name = f"{base_name}_{run_name}"
+            base_name = f"{base_name}_{run_name}"
         save_path = storage_dir / f"{base_name}.pt"
 
         save_dict = {
-                "n_atom": n_atom,
-                "atom_types": atom_types,
-                "coords": coords,
-                "predictions_energy": predictions_energy,
-                "predictions_charges": predictions_charges,
-                "ground_truth_energy": ground_truth_energy,
-                "ground_truth_charges": ground_truth_charges,
-                "metadata": metadata_list,
+            "n_atom": n_atom,
+            "atom_types": atom_types,
+            "coords": coords,
+            "predictions_energy": predictions_energy,
+            "predictions_charges": predictions_charges,
+            "ground_truth_energy": ground_truth_energy,
+            "ground_truth_charges": ground_truth_charges,
+            "metadata": metadata_list,
         }
         if save_emb:
-            save_dict["atomic_emb"] = torch.stack(atomic_embeddings) if atomic_embeddings else torch.tensor([])
+            save_dict["atomic_emb"] = (
+                torch.stack(atomic_embeddings)
+                if atomic_embeddings
+                else torch.tensor([])
+            )
 
         torch.save(save_dict, save_path)
-        
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -226,5 +240,14 @@ if __name__ == "__main__":
         help="Save atomic embeddings.",
     )
     args: argparse.Namespace = parser.parse_args()
-    main(args.ckpt_path, args.data_path, args.split_file, args.tag, 
-         args.max_n_graphs, args.batch_size, args.use_last, args.name, args.save_emb)
+    main(
+        args.ckpt_path,
+        args.data_path,
+        args.split_file,
+        args.tag,
+        args.max_n_graphs,
+        args.batch_size,
+        args.use_last,
+        args.name,
+        args.save_emb,
+    )
