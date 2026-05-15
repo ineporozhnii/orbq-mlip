@@ -78,11 +78,15 @@ class eSCN(nn.Module):
         distance_resolution: float = 0.02,
         show_timing_info: bool = False,
         regress_forces: bool = False,
+        regress_charges: bool = True,
+        use_equivariant_predictor: bool = True,
         *args,
         **kwargs,
     ) -> None:
         super().__init__()
         self.regress_forces = regress_forces
+        self.regress_charges = regress_charges
+        self.use_equivariant_predictor = use_equivariant_predictor
 
         self.cutoff = cutoff
         self.show_timing_info = show_timing_info
@@ -185,15 +189,18 @@ class eSCN(nn.Module):
 
         irreps_in = " + ".join(irreps_in_list)
 
-        self.use_equivariant_predictor = True
+        if getattr(self, "regress_charges", True):
+            if getattr(self, "use_equivariant_predictor", True):
+                self.lin_out = EquivariantPopulationPredictor(
+                    irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L
+                )
+            else:
+                self.lin_out = InvariantPopulationPredictor(
+                    irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L
+                )
 
-        if self.use_equivariant_predictor:
-            self.lin_out = EquivariantPopulationPredictor(
-                irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L
-            )
-        else:
-            self.lin_out = InvariantPopulationPredictor(
-                irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L
+            self.atomic_charge_block = AtomicChargeBlock(
+                self.sphere_channels_all, self.num_sphere_samples, self.act
             )
 
         self.energy_block = EnergyBlock(
@@ -203,10 +210,6 @@ class eSCN(nn.Module):
             self.force_block = ForceBlock(
                 self.sphere_channels_all, self.num_sphere_samples, self.act
             )
-
-        self.atomic_charge_block = AtomicChargeBlock(
-            self.sphere_channels_all, self.num_sphere_samples, self.act
-        )
 
         # self.atomic_charge_lin = o3.Linear(irreps_in=irreps_in, irreps_out="1x0e")
 
@@ -333,7 +336,11 @@ class eSCN(nn.Module):
             current_lm_idx += num_m_components
 
         x_pt_for_e3nn = torch.cat(e3nn_input_parts, dim=1)
-        orbital_charges = self.lin_out(x_pt_for_e3nn)
+        
+        if getattr(self, "regress_charges", True):
+            orbital_charges = self.lin_out(x_pt_for_e3nn)
+        else:
+            orbital_charges = None
 
         # Sample the spherical channels (node embeddings) at evenly distributed points on the sphere.
         # These values are fed into the output blocks.
@@ -367,7 +374,10 @@ class eSCN(nn.Module):
         ################################################################
         # Atomic Charge prediction
         ################################################################
-        node_charges = self.atomic_charge_block(x_pt_energy).flatten()
+        if getattr(self, "regress_charges", True):
+            node_charges = self.atomic_charge_block(x_pt_energy).flatten()
+        else:
+            node_charges = None
 
         if getattr(self, "regress_forces", False):
             forces = self.force_block(x_pt_energy, self.sphere_points)

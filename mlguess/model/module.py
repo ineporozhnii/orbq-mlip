@@ -199,188 +199,139 @@ class EnergyChargesLightningModule(LightningModule):
             energy, orbital_charges, atomic_charges, _ = out
             pred_forces = None
 
-        pred_energy = energy * self.scale_energy
-        target_energy = batch.energy
-
-        if self.hparams.charges_type == "orbital_dxtb":
-            target_charges = batch.orbital_charges_dxtb
-
-            # Since target_charges are now full matrices, we mask pred_charges with matrix_orb_index
-            mask = self.matrix_orb_index[batch.atom_types].flatten()
-            pred_charges = (
-                orbital_charges.flatten()[mask] * self.scale_orbital_charges_dxtb
-            )
-            scale_charges = self.scale_orbital_charges_dxtb
-
-            # Extract diagonals for metrics
-            charges_mat_pad = torch.zeros(
-                self.matrix_orb_index[batch.atom_types].shape,
-                device=orbital_charges.device,
-            )
-            charges_mat_pad[self.matrix_orb_index[batch.atom_types]] = pred_charges
-            pred_charges_diag_pad = torch.gather(
-                charges_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types]
-            )
-            pred_charges_diag = pred_charges_diag_pad[self.orb_index[batch.atom_types]]
-
-            # Apply orbital charge correction to enforce total charge constraint
-            corrected_charges_diag = self.orbital_charge_correction(
-                batch, pred_charges_diag
-            )
-
-            # Calculate the difference to shift the diagonal
-            correction_diff = corrected_charges_diag - pred_charges_diag
-            correction_diff_pad = torch.zeros(
-                self.orb_index[batch.atom_types].shape, device=orbital_charges.device
-            )
-            correction_diff_pad[self.orb_index[batch.atom_types]] = correction_diff
-
-            # Add the difference directly back to the full matrix diagonal
-            charges_mat_pad = charges_mat_pad.scatter_add(
-                1, self.diag_in_matrix_index[batch.atom_types], correction_diff_pad
-            )
-
-            # Re-extract the corrected full matrix back to pred_charges
-            pred_charges = charges_mat_pad[self.matrix_orb_index[batch.atom_types]]
-
-            target_mat_pad = torch.zeros(
-                self.matrix_orb_index[batch.atom_types].shape,
-                device=orbital_charges.device,
-            )
-            target_mat_pad[self.matrix_orb_index[batch.atom_types]] = target_charges
-            target_charges_diag_pad = torch.gather(
-                target_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types]
-            )
-            target_charges_diag = target_charges_diag_pad[
-                self.orb_index[batch.atom_types]
-            ]
-
-            self.pred_charges_diag = corrected_charges_diag
-            self.target_charges_diag = target_charges_diag
-
-        elif self.hparams.charges_type == "atomic_dxtb":
-            target_charges = batch.atomic_charges_dxtb
-            pred_charges = atomic_charges * self.scale_atomic_charges_dxtb
-            scale_charges = self.scale_atomic_charges_dxtb
-            self.pred_charges_diag = pred_charges
-            self.target_charges_diag = target_charges
-        elif self.hparams.charges_type == "atomic_lowdin":
-            target_charges = batch.atomic_charges_lowdin
-            pred_charges = atomic_charges * self.scale_atomic_charges_lowdin
-            scale_charges = self.scale_atomic_charges_lowdin
-            self.pred_charges_diag = pred_charges
-            self.target_charges_diag = target_charges
-        elif self.hparams.charges_type == "atomic_mulliken":
-            target_charges = batch.atomic_charges_mulliken
-            pred_charges = atomic_charges * self.scale_atomic_charges_mulliken
-            scale_charges = self.scale_atomic_charges_mulliken
-            self.pred_charges_diag = pred_charges
-            self.target_charges_diag = target_charges
-        elif self.hparams.charges_type == "none":
-            target_charges = torch.zeros_like(atomic_charges)
-            pred_charges = torch.zeros_like(atomic_charges)
-            scale_charges = 1.0
-            self.pred_charges_diag = pred_charges
-            self.target_charges_diag = target_charges
+        pred_energy = energy * self.scale_energy if energy is not None else None
+        target_energy = getattr(batch, 'energy', None)
 
         loss_coeffs = getattr(self.hparams, "loss_coeffs", {})
-
         loss = 0.0
+        
+        pred_charges_diag = None
+        target_charges_diag = None
+        pred_charges = None
+        target_charges = None
+        scale_charges = 1.0
+        
+        if getattr(self.model, "regress_charges", True) and (orbital_charges is not None or atomic_charges is not None):
+            if getattr(self.hparams, 'charges_type', 'none') == "orbital_dxtb":
+                target_charges = batch.orbital_charges_dxtb
 
-        if self.hparams.target_property == "combined":
-            if self.hparams.criterion == "mse":
-                loss_energy = (
-                    (
-                        pred_energy / self.scale_energy
-                        - target_energy / self.scale_energy
-                    )
-                    .pow(2)
-                    .mean()
+                # Since target_charges are now full matrices, we mask pred_charges with matrix_orb_index
+                mask = self.matrix_orb_index[batch.atom_types].flatten()
+                pred_charges = (
+                    orbital_charges.flatten()[mask] * self.scale_orbital_charges_dxtb
                 )
-                loss_charges = (
-                    (pred_charges / scale_charges - target_charges / scale_charges)
-                    .pow(2)
-                    .mean()
+                scale_charges = self.scale_orbital_charges_dxtb
+
+                # Extract diagonals for metrics
+                charges_mat_pad = torch.zeros(
+                    self.matrix_orb_index[batch.atom_types].shape,
+                    device=orbital_charges.device,
                 )
-                loss += (
-                    loss_coeffs.get(
-                        "energy", self.hparams.get("energy_loss_weight", 0.0)
-                    )
-                    * loss_energy
+                charges_mat_pad[self.matrix_orb_index[batch.atom_types]] = pred_charges
+                pred_charges_diag_pad = torch.gather(
+                    charges_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types]
                 )
-                loss += (
-                    loss_coeffs.get(
-                        "charges", self.hparams.get("charges_loss_weight", 1.0)
-                    )
-                    * loss_charges
+                pred_charges_diag = pred_charges_diag_pad[self.orb_index[batch.atom_types]]
+
+                # Apply orbital charge correction to enforce total charge constraint
+                corrected_charges_diag = self.orbital_charge_correction(
+                    batch, pred_charges_diag
                 )
-                if pred_forces is not None and hasattr(batch, "forces"):
-                    target_forces = batch.forces
-                    loss_forces = (pred_forces - target_forces).pow(2).mean()
-                    loss += loss_coeffs.get("forces", 0.0) * loss_forces
-            elif self.hparams.criterion == "mae":
-                loss_energy = (
-                    (
-                        pred_energy / self.scale_energy
-                        - target_energy / self.scale_energy
-                    )
-                    .abs()
-                    .mean()
+
+                # Calculate the difference to shift the diagonal
+                correction_diff = corrected_charges_diag - pred_charges_diag
+                correction_diff_pad = torch.zeros(
+                    self.orb_index[batch.atom_types].shape, device=orbital_charges.device
                 )
-                loss_charges = (
-                    (pred_charges / scale_charges - target_charges / scale_charges)
-                    .abs()
-                    .mean()
+                correction_diff_pad[self.orb_index[batch.atom_types]] = correction_diff
+
+                # Add the difference directly back to the full matrix diagonal
+                charges_mat_pad = charges_mat_pad.scatter_add(
+                    1, self.diag_in_matrix_index[batch.atom_types], correction_diff_pad
                 )
-                loss += (
-                    loss_coeffs.get(
-                        "energy", self.hparams.get("energy_loss_weight", 0.0)
-                    )
-                    * loss_energy
+
+                # Re-extract the corrected full matrix back to pred_charges
+                pred_charges = charges_mat_pad[self.matrix_orb_index[batch.atom_types]]
+
+                target_mat_pad = torch.zeros(
+                    self.matrix_orb_index[batch.atom_types].shape,
+                    device=orbital_charges.device,
                 )
-                loss += (
-                    loss_coeffs.get(
-                        "charges", self.hparams.get("charges_loss_weight", 1.0)
-                    )
-                    * loss_charges
+                target_mat_pad[self.matrix_orb_index[batch.atom_types]] = target_charges
+                target_charges_diag_pad = torch.gather(
+                    target_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types]
                 )
-                if pred_forces is not None and hasattr(batch, "forces"):
-                    target_forces = batch.forces
-                    loss_forces = (pred_forces - target_forces).abs().mean()
-                    loss += loss_coeffs.get("forces", 0.0) * loss_forces
-            else:
-                raise ValueError(f"Unsupported criterion: {self.hparams.criterion}")
+                target_charges_diag = target_charges_diag_pad[
+                    self.orb_index[batch.atom_types]
+                ]
+
+                self.pred_charges_diag = corrected_charges_diag
+                self.target_charges_diag = target_charges_diag
+
+            elif self.hparams.charges_type == "atomic_dxtb":
+                target_charges = getattr(batch, 'atomic_charges_dxtb', None)
+                pred_charges = atomic_charges * self.scale_atomic_charges_dxtb
+                scale_charges = self.scale_atomic_charges_dxtb
+                self.pred_charges_diag = pred_charges
+                self.target_charges_diag = target_charges
+            elif self.hparams.charges_type == "atomic_lowdin":
+                target_charges = getattr(batch, 'atomic_charges_lowdin', None)
+                pred_charges = atomic_charges * self.scale_atomic_charges_lowdin
+                scale_charges = self.scale_atomic_charges_lowdin
+                self.pred_charges_diag = pred_charges
+                self.target_charges_diag = target_charges
+            elif self.hparams.charges_type == "atomic_mulliken":
+                target_charges = getattr(batch, 'atomic_charges_mulliken', None)
+                pred_charges = atomic_charges * self.scale_atomic_charges_mulliken
+                scale_charges = self.scale_atomic_charges_mulliken
+                self.pred_charges_diag = pred_charges
+                self.target_charges_diag = target_charges
         else:
-            if self.hparams.target_property == "energy":
-                scale = self.scale_energy
-                target = target_energy
-                pred = pred_energy
-            elif self.hparams.target_property == "charges":
-                scale = scale_charges
-                target = target_charges
-                pred = pred_charges
-            elif self.hparams.target_property == "forces":
-                scale = 1.0
-                target = batch.forces
-                pred = pred_forces
+            self.pred_charges_diag = None
+            self.target_charges_diag = None
 
-            if self.hparams.criterion == "mse":
-                loss = (pred / scale - target / scale).pow(2).mean()
-            elif self.hparams.criterion == "mae":
-                loss = (pred / scale - target / scale).abs().mean()
-            else:
-                raise ValueError(f"Unsupported criterion: {self.hparams.criterion}")
+        if getattr(self.hparams, 'criterion', 'mse') == "mse":
+            if loss_coeffs.get("energy", 0.0) > 0.0 and target_energy is not None and pred_energy is not None:
+                loss_energy = (
+                    (pred_energy / self.scale_energy - target_energy / self.scale_energy)
+                    .pow(2)
+                    .mean()
+                )
+                loss += loss_coeffs["energy"] * loss_energy
+            if loss_coeffs.get("charges", 0.0) > 0.0 and pred_charges is not None and target_charges is not None:
+                loss_charges = (
+                    (pred_charges / scale_charges - target_charges / scale_charges)
+                    .pow(2)
+                    .mean()
+                )
+                loss += loss_coeffs["charges"] * loss_charges
+            if loss_coeffs.get("forces", 0.0) > 0.0 and pred_forces is not None and hasattr(batch, "forces"):
+                target_forces = batch.forces
+                loss_forces = (pred_forces - target_forces).pow(2).mean()
+                loss += loss_coeffs["forces"] * loss_forces
+        elif self.hparams.criterion == "mae":
+            if loss_coeffs.get("energy", 0.0) > 0.0 and target_energy is not None and pred_energy is not None:
+                loss_energy = (
+                    (pred_energy / self.scale_energy - target_energy / self.scale_energy)
+                    .abs()
+                    .mean()
+                )
+                loss += loss_coeffs["energy"] * loss_energy
+            if loss_coeffs.get("charges", 0.0) > 0.0 and pred_charges is not None and target_charges is not None:
+                loss_charges = (
+                    (pred_charges / scale_charges - target_charges / scale_charges)
+                    .abs()
+                    .mean()
+                )
+                loss += loss_coeffs["charges"] * loss_charges
+            if loss_coeffs.get("forces", 0.0) > 0.0 and pred_forces is not None and hasattr(batch, "forces"):
+                target_forces = batch.forces
+                loss_forces = (pred_forces - target_forces).abs().mean()
+                loss += loss_coeffs["forces"] * loss_forces
+        else:
+            raise ValueError(f"Unsupported criterion: {self.hparams.criterion}")
 
-        if pred_forces is None:
-            return (
-                loss,
-                pred_energy,
-                target_energy,
-                pred_charges,
-                target_charges,
-                None,
-                None,
-            )
+        target_forces = getattr(batch, "forces", None)
         return (
             loss,
             pred_energy,
@@ -388,7 +339,7 @@ class EnergyChargesLightningModule(LightningModule):
             pred_charges,
             target_charges,
             pred_forces,
-            batch.forces,
+            target_forces,
         )
 
     def training_step(self, batch, batch_idx):
@@ -402,23 +353,21 @@ class EnergyChargesLightningModule(LightningModule):
             target_forces,
         ) = self(batch)
 
-        mse_energy = (pred_energy - target_energy).pow(2).mean().item()
-        mae_energy = (pred_energy - target_energy).abs().mean().item()
+        log_dict = {}
+        if isinstance(loss, torch.Tensor) and loss.requires_grad:
+            log_dict["loss/train"] = loss
+            
+        if pred_energy is not None and target_energy is not None:
+            log_dict["mse/train_energy"] = (pred_energy - target_energy).pow(2).mean().item()
+            log_dict["mae/train_energy"] = (pred_energy - target_energy).abs().mean().item()
 
-        mse_charges = (
-            (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
-        )
-        mae_charges = (
-            (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
-        )
-
-        log_dict = {
-            "loss/train": loss,
-            "mse/train_energy": mse_energy,
-            "mae/train_energy": mae_energy,
-            "mse/train_charges": mse_charges,
-            "mae/train_charges": mae_charges,
-        }
+        if self.pred_charges_diag is not None and self.target_charges_diag is not None:
+            log_dict["mse/train_charges"] = (
+                (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
+            )
+            log_dict["mae/train_charges"] = (
+                (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
+            )
 
         if pred_forces is not None and target_forces is not None:
             log_dict["mse/train_forces"] = (
@@ -428,9 +377,10 @@ class EnergyChargesLightningModule(LightningModule):
                 (pred_forces - target_forces).abs().mean().item()
             )
 
-        self.log_dict(
-            log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
-        )
+        if log_dict:
+            self.log_dict(
+                log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
+            )
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -444,23 +394,21 @@ class EnergyChargesLightningModule(LightningModule):
             target_forces,
         ) = self(batch)
 
-        mse_energy = (pred_energy - target_energy).pow(2).mean().item()
-        mae_energy = (pred_energy - target_energy).abs().mean().item()
+        log_dict = {}
+        if isinstance(loss, torch.Tensor):
+            log_dict["loss/val"] = loss
 
-        mse_charges = (
-            (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
-        )
-        mae_charges = (
-            (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
-        )
+        if pred_energy is not None and target_energy is not None:
+            log_dict["mse/val_energy"] = (pred_energy - target_energy).pow(2).mean().item()
+            log_dict["mae/val_energy"] = (pred_energy - target_energy).abs().mean().item()
 
-        log_dict = {
-            "loss/val": loss,
-            "mse/val_energy": mse_energy,
-            "mae/val_energy": mae_energy,
-            "mse/val_charges": mse_charges,
-            "mae/val_charges": mae_charges,
-        }
+        if self.pred_charges_diag is not None and self.target_charges_diag is not None:
+            log_dict["mse/val_charges"] = (
+                (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
+            )
+            log_dict["mae/val_charges"] = (
+                (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
+            )
 
         if pred_forces is not None and target_forces is not None:
             log_dict["mse/val_forces"] = (
@@ -470,21 +418,26 @@ class EnergyChargesLightningModule(LightningModule):
                 (pred_forces - target_forces).abs().mean().item()
             )
 
-        self.log_dict(
-            log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
-        )
+        if log_dict:
+            self.log_dict(
+                log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
+            )
 
         ret_dict = {
-            "loss": loss,
-            "pred_charges": self.pred_charges_diag,
-            "pred_energy": pred_energy,
-            "target_charges": self.target_charges_diag,
-            "target_energy": target_energy,
             "n_atom": batch.n_atom,
             "atom_types": batch.atom_types,
             "coords": batch.coords,
         }
-        if pred_forces is not None:
+        if isinstance(loss, torch.Tensor):
+            ret_dict["loss"] = loss
+            
+        if pred_energy is not None and target_energy is not None:
+            ret_dict["pred_energy"] = pred_energy
+            ret_dict["target_energy"] = target_energy
+        if self.pred_charges_diag is not None and self.target_charges_diag is not None:
+            ret_dict["pred_charges"] = self.pred_charges_diag
+            ret_dict["target_charges"] = self.target_charges_diag
+        if pred_forces is not None and target_forces is not None:
             ret_dict["pred_forces"] = pred_forces
             ret_dict["target_forces"] = target_forces
 
@@ -501,23 +454,21 @@ class EnergyChargesLightningModule(LightningModule):
             target_forces,
         ) = self(batch)
 
-        mse_energy = (pred_energy - target_energy).pow(2).mean().item()
-        mae_energy = (pred_energy - target_energy).abs().mean().item()
+        log_dict = {}
+        if isinstance(loss, torch.Tensor):
+            log_dict["loss/test"] = loss
 
-        mse_charges = (
-            (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
-        )
-        mae_charges = (
-            (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
-        )
+        if pred_energy is not None and target_energy is not None:
+            log_dict["mse/test_energy"] = (pred_energy - target_energy).pow(2).mean().item()
+            log_dict["mae/test_energy"] = (pred_energy - target_energy).abs().mean().item()
 
-        log_dict = {
-            "loss/test": loss,
-            "mse/test_energy": mse_energy,
-            "mae/test_energy": mae_energy,
-            "mse/test_charges": mse_charges,
-            "mae/test_charges": mae_charges,
-        }
+        if self.pred_charges_diag is not None and self.target_charges_diag is not None:
+            log_dict["mse/test_charges"] = (
+                (self.pred_charges_diag - self.target_charges_diag).pow(2).mean().item()
+            )
+            log_dict["mae/test_charges"] = (
+                (self.pred_charges_diag - self.target_charges_diag).abs().mean().item()
+            )
 
         if pred_forces is not None and target_forces is not None:
             log_dict["mse/test_forces"] = (
@@ -527,9 +478,10 @@ class EnergyChargesLightningModule(LightningModule):
                 (pred_forces - target_forces).abs().mean().item()
             )
 
-        self.log_dict(
-            log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
-        )
+        if log_dict:
+            self.log_dict(
+                log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
+            )
         return loss
 
     def configure_optimizers(self):
