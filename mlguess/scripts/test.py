@@ -14,7 +14,7 @@ from torch.utils.data import Subset
 from mlguess.common.pyg import DataLoader
 from mlguess.data.dataset import LmdbDataset
 from mlguess.data.datamodule import worker_init_fn
-from mlguess.model.module import EnergyChargesLightningModule
+from mlguess.model.module import MultitaskLightningModule
 
 pylogger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def main(
     # pylint: disable=E1120
     print(f"Loading checkpoint from {ckpt}")
     pylogger.info(f"loaded checkpoint: {ckpt}")
-    model = EnergyChargesLightningModule.load_from_checkpoint(checkpoint_path=ckpt).to(
+    model = MultitaskLightningModule.load_from_checkpoint(checkpoint_path=ckpt).to(
         "cuda"
     )
     model.eval()
@@ -118,38 +118,43 @@ def main(
         coords = []
         predictions_energy = []
         predictions_charges = []
+        predictions_forces = []
         ground_truth_energy = []
         ground_truth_charges = []
+        ground_truth_forces = []
         atomic_embeddings = []
         for batch in test_loader:
             batch = batch.to("cuda")
-            energy, orbital_charges, atomic_charges, atomic_emb = model.model(batch)
-
-            if model.hparams.charges_type == "orbital_dxtb":
-                target_charges = batch.orbital_charges_dxtb
-                pred_charges = model.orbital_charge_correction(batch, orbital_charges)
-            elif model.hparams.charges_type == "atomic_dxtb":
-                target_charges = batch.atomic_charges_dxtb
-                pred_charges = atomic_charges
-            elif model.hparams.charges_type == "atomic_lowdin":
-                target_charges = batch.atomic_charges_lowdin
-                pred_charges = atomic_charges
-            elif model.hparams.charges_type == "atomic_mulliken":
-                target_charges = batch.atomic_charges_mulliken
-                pred_charges = atomic_charges
-            else:
-                target_charges = torch.zeros_like(batch.atom_types)
-                pred_charges = torch.zeros_like(batch.atom_types)
+            
+            loss, pred_energy, target_energy, pred_charges, target_charges, pred_forces, target_forces = model(batch)
 
             n_atom.extend(batch["n_atom"].detach().cpu())
             atom_types.extend(batch["atom_types"].detach().cpu())
             coords.extend(batch["coords"].detach().cpu())
-            predictions_energy.extend((energy).detach().cpu())
-            predictions_charges.extend((pred_charges).detach().cpu())
-            ground_truth_energy.extend(batch.energy.detach().cpu())
-            ground_truth_charges.extend(target_charges.detach().cpu())
+            
+            if pred_energy is not None:
+                predictions_energy.extend(pred_energy.detach().cpu())
+            if target_energy is not None:
+                ground_truth_energy.extend(target_energy.detach().cpu())
+                
+            if pred_charges is not None:
+                predictions_charges.extend(pred_charges.detach().cpu())
+            if target_charges is not None:
+                ground_truth_charges.extend(target_charges.detach().cpu())
+                
+            if pred_forces is not None:
+                predictions_forces.extend(pred_forces.detach().cpu().flatten())
+            if target_forces is not None:
+                ground_truth_forces.extend(target_forces.detach().cpu().flatten())
+                
             if save_emb:
+                out = model.model(batch)
+                if len(out) == 5:
+                    _, _, _, _, atomic_emb = out
+                else:
+                    _, _, _, atomic_emb = out
                 atomic_embeddings.extend(atomic_emb.detach().cpu())
+                
             metadata_list.extend(batch.metadata)
             prog.update(batch["n_atom"].shape[0])
         elapsed_time = time.time() - curr_time
@@ -178,6 +183,10 @@ def main(
             "ground_truth_charges": ground_truth_charges,
             "metadata": metadata_list,
         }
+        if predictions_forces:
+            save_dict["predictions_forces"] = torch.tensor(predictions_forces)
+        if ground_truth_forces:
+            save_dict["ground_truth_forces"] = torch.tensor(ground_truth_forces)
         if save_emb:
             save_dict["atomic_emb"] = (
                 torch.stack(atomic_embeddings)
