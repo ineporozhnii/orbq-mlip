@@ -38,6 +38,7 @@ class DataModule(pl.LightningDataModule):
         split_file: Optional[Path],
         num_workers: DictConfig,
         batch_size: DictConfig,
+        metadata_file: Optional[str] = None,
     ):
         super().__init__()
         self.dataset = dataset
@@ -45,6 +46,7 @@ class DataModule(pl.LightningDataModule):
             self.splits = json.load(fp)
         self.num_workers = num_workers
         self.batch_size = batch_size
+        self.metadata_file = metadata_file
         self.train_dataset: Optional[Dataset] = None
         self.val_dataset: Optional[Dataset] = None
         self.test_dataset: Optional[Dataset] = None
@@ -58,19 +60,23 @@ class DataModule(pl.LightningDataModule):
         self.train_dataset = Subset(self.dataset, self.splits["train"])
         self.val_dataset = Subset(self.dataset, self.splits["validation"])
         self.test_dataset = Subset(self.dataset, self.splits["test"])
-        if (Path(self.dataset.path) / 'metadata.json').exists():
-            with open(self.dataset.path / 'metadata.json', 'r') as fp:
+        
+        metadata_path = Path(self.metadata_file) if self.metadata_file is not None else Path(self.dataset.path) / 'metadata.json'
+        if metadata_path.exists():
+            with open(metadata_path, 'r') as fp:
                 self.metadata = json.load(fp)
         else:
-            self.metadata = self.get_metadata()
+            self.metadata = self.get_metadata(metadata_path)
 
-    def get_metadata(self):
+    def get_metadata(self, metadata_path):
         energy_sum = 0
+        forces_sum = 0
         orbital_charges_dxtb_sum = 0
         atomic_charges_dxtb_sum = 0
         atomic_charges_lowdin_sum = 0
         atomic_charges_mulliken_sum = 0
         energy_2 = 0
+        forces_2 = 0
         orbital_charges_dxtb_2 = 0
         atomic_charges_dxtb_2 = 0
         atomic_charges_lowdin_2 = 0
@@ -81,6 +87,9 @@ class DataModule(pl.LightningDataModule):
         progress = tqdm(total=len(self.train_dataset))
         for data in self.train_dataset:
             energy_sum += data.energy.mean()
+            if hasattr(data, 'forces') and data.forces is not None:
+                forces_sum += data.forces.mean()
+                forces_2 += (data.forces ** 2).mean()
             atomic_charges_dxtb_sum += data.atomic_charges_dxtb.mean()
             atomic_charges_lowdin_sum += data.atomic_charges_lowdin.mean()
             atomic_charges_mulliken_sum += data.atomic_charges_mulliken.mean()
@@ -97,6 +106,14 @@ class DataModule(pl.LightningDataModule):
 
         energy_mean = energy_sum / len(self.train_dataset)
         energy_var = energy_2 / len(self.train_dataset) - energy_mean ** 2
+        
+        if hasattr(self.train_dataset[0], 'forces') and self.train_dataset[0].forces is not None:
+            forces_mean = forces_sum / len(self.train_dataset)
+            forces_var = forces_2 / len(self.train_dataset) - forces_mean ** 2
+        else:
+            import torch
+            forces_mean = torch.tensor(0.0)
+            forces_var = torch.tensor(1.0)
         orbital_charges_dxtb_mean = orbital_charges_dxtb_sum / len(self.train_dataset)
         orbital_charges_dxtb_var = orbital_charges_dxtb_2 / len(self.train_dataset) - orbital_charges_dxtb_mean ** 2
         atomic_charges_dxtb_mean = atomic_charges_dxtb_sum / len(self.train_dataset)
@@ -110,6 +127,8 @@ class DataModule(pl.LightningDataModule):
         metadata = {
             'energy_mean': energy_mean.item(),
             'energy_var': energy_var.item(),
+            'forces_mean': forces_mean.item(),
+            'forces_var': forces_var.item(),
             'orbital_charges_dxtb_mean': orbital_charges_dxtb_mean.item(),
             'orbital_charges_dxtb_var': orbital_charges_dxtb_var.item(),
             'atomic_charges_dxtb_mean': atomic_charges_dxtb_mean.item(),
@@ -121,7 +140,8 @@ class DataModule(pl.LightningDataModule):
             'avg_num_neighbors': avg_num_neighbors,
             'unique_atom_types': list(unique_atom_types)
         }
-        with open(self.dataset.path / 'metadata.json', 'w') as fp:
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_path, 'w') as fp:
             json.dump(metadata, fp)
         return metadata
 

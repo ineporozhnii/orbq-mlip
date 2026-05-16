@@ -8,7 +8,7 @@ from mlguess.model.basis_set import get_basis_set, transform_basis_set
 from mlguess.model.gtos import GTOs
 
 
-class EnergyChargesLightningModule(LightningModule):
+class MultitaskLightningModule(LightningModule):
     """
     Energy and orbital/atomic charge prediction module.
     """
@@ -61,6 +61,12 @@ class EnergyChargesLightningModule(LightningModule):
             "scale_orbital_charges_dxtb",
             torch.FloatTensor(
                 [self.hparams.metadata["orbital_charges_dxtb_var"]]
+            ).sqrt(),
+        )
+        self.register_buffer(
+            "scale_forces",
+            torch.FloatTensor(
+                [self.hparams.metadata.get("forces_var", 1.0)]
             ).sqrt(),
         )
 
@@ -194,7 +200,7 @@ class EnergyChargesLightningModule(LightningModule):
         out = self.model(batch)
         if len(out) == 5:
             energy, forces, orbital_charges, atomic_charges, _ = out
-            pred_forces = forces
+            pred_forces = forces * self.scale_forces if forces is not None else None
         else:
             energy, orbital_charges, atomic_charges, _ = out
             pred_forces = None
