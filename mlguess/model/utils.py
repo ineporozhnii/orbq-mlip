@@ -65,12 +65,12 @@ class WarmupMilestoneScheduler(optim.lr_scheduler.LambdaLR):
 
 
 class PredictionScatterPlotCallback(Callback):
-    def __init__(self, log_interval: int = 1, max_charges_plot: int = 200_000):
+    def __init__(self, log_interval: int = 1000, max_charges_plot: int = 200_000):
         """
         Callback to log scatter plot of predictions vs ground truth to WandB.
 
         Args:
-            log_interval: Interval (in epochs) at which to log the scatter plot.
+            log_interval: Interval (in steps) at which to log the scatter plot.
             max_charges_plot: Maximum number of orbital charges to plot in the scatter plot. (Above 200k WandB interactive plots become slow)
         """
         self.log_interval = log_interval
@@ -118,7 +118,7 @@ class PredictionScatterPlotCallback(Callback):
         """
         Generate and log the scatter plot at the end of the validation epoch.
         """
-        if trainer.current_epoch % self.log_interval == 0:
+        if trainer.global_step % self.log_interval == 0:
             # Create subplots: one for Charges, one for Energy, one for Forces
             fig, axes = plt.subplots(1, 3, figsize=(24, 8))
 
