@@ -118,7 +118,7 @@ class PredictionScatterPlotCallback(Callback):
         """
         Generate and log the scatter plot at the end of the validation epoch.
         """
-        if trainer.global_step % self.log_interval == 0:
+        if trainer.current_epoch % self.log_interval == 0:
             # Create subplots: one for Charges, one for Energy, one for Forces
             fig, axes = plt.subplots(1, 3, figsize=(24, 8))
 
