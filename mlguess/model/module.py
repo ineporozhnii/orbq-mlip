@@ -104,6 +104,16 @@ class MultitaskLightningModule(LightningModule):
             (2 * torch.arange(len(self.max_n_orbitals_per_L)) + 1) ** 2
         )
         self.max_matrix_dim = int(self.max_matrix_dim_per_L.sum())
+        
+        self.max_dataset_matrix_dim_per_L = (self.max_n_orbitals_per_L * (2 * torch.arange(len(self.max_n_orbitals_per_L)) + 1)) ** 2
+        self.max_dataset_matrix_dim = int(self.max_dataset_matrix_dim_per_L.sum())
+        
+        dataset_orb_index = torch.zeros(
+            max(unique_atom_types) + 1, self.max_dataset_matrix_dim, dtype=torch.bool
+        )
+        dataset_to_model_mask = torch.zeros(
+            max(unique_atom_types) + 1, self.max_dataset_matrix_dim, dtype=torch.bool
+        )
 
         orb_index = torch.zeros(
             max(unique_atom_types) + 1, self.max_outdim, dtype=torch.bool
@@ -121,6 +131,9 @@ class MultitaskLightningModule(LightningModule):
         )
         matrix_offsets = torch.cat(
             [torch.tensor([0]), torch.cumsum(self.max_matrix_dim_per_L, dim=0)]
+        )
+        dataset_matrix_offsets = torch.cat(
+            [torch.tensor([0]), torch.cumsum(self.max_dataset_matrix_dim_per_L, dim=0)]
         )
         L_index = torch.zeros(
             max(unique_atom_types) + 1, self.max_n_Ls, dtype=torch.bool
@@ -151,6 +164,19 @@ class MultitaskLightningModule(LightningModule):
                             + orb_idx * (2 * l + 1) ** 2
                             + diag_offsets
                         )
+                    
+                    dim_l = n_orbs * (2 * l + 1)
+                    full_mat_dim = dim_l ** 2
+                    block_start = dataset_matrix_offsets[l]
+                    dataset_orb_index[int(k), block_start : block_start + full_mat_dim] = True
+                    
+                    local_mask = torch.zeros(dim_l, dim_l, dtype=torch.bool)
+                    for i in range(n_orbs):
+                        start = i * (2 * l + 1)
+                        end = (i + 1) * (2 * l + 1)
+                        local_mask[start:end, start:end] = True
+                    
+                    dataset_to_model_mask[int(k), block_start : block_start + full_mat_dim] = local_mask.flatten()
 
             if matrix_index_list:
                 matrix_index = torch.cat(matrix_index_list)
@@ -167,6 +193,8 @@ class MultitaskLightningModule(LightningModule):
         self.register_buffer("orb_per_shell", orb_per_shell)
         self.register_buffer("orb_index", orb_index)
         self.register_buffer("matrix_orb_index", matrix_orb_index)
+        self.register_buffer("dataset_orb_index", dataset_orb_index)
+        self.register_buffer("dataset_to_model_mask", dataset_to_model_mask)
         self.register_buffer("diag_in_matrix_index", diag_in_matrix_index)
         self.register_buffer("L_index", L_index)
         self.pbc = self.hparams.pbc
@@ -219,7 +247,9 @@ class MultitaskLightningModule(LightningModule):
         
         if getattr(self.model, "regress_charges", True) and (orbital_charges is not None or atomic_charges is not None):
             if getattr(self.hparams, 'charges_type', 'none') == "orbital_dxtb":
-                target_charges = batch.orbital_charges_dxtb
+                full_target_charges = batch.orbital_charges_dxtb
+                dset_mask = self.dataset_to_model_mask[batch.atom_types][self.dataset_orb_index[batch.atom_types]]
+                target_charges = full_target_charges[dset_mask]
 
                 # Since target_charges are now full matrices, we mask pred_charges with matrix_orb_index
                 mask = self.matrix_orb_index[batch.atom_types].flatten()
