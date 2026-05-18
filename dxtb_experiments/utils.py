@@ -183,15 +183,15 @@ def calculate_dxtb(args: tuple):
     Q_sorted = Q_true[sort_perm][:, sort_perm]
     blocks = []
     offset = 0
-    sorted_lm = calc.ihelp.angular[calc.ihelp.orbitals_to_shell][sort_perm]
+    sorted_shell = calc.ihelp.orbitals_to_shell[sort_perm]
     sorted_atom = calc.ihelp.shells_to_atom[calc.ihelp.orbitals_to_shell][sort_perm]
     
     for atom_idx in range(len(numbers)):
         atom_mask = (sorted_atom == atom_idx)
-        lms_for_atom = sorted_lm[atom_mask]
+        shells_for_atom = sorted_shell[atom_mask]
         
-        if lms_for_atom.numel() > 0:
-            unique_lms, counts = torch.unique_consecutive(lms_for_atom, return_counts=True)
+        if shells_for_atom.numel() > 0:
+            unique_shells, counts = torch.unique_consecutive(shells_for_atom, return_counts=True)
             for size in counts:
                 block = Q_sorted[offset:offset+size, offset:offset+size]
                 blocks.append(block.flatten())
