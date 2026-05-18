@@ -145,7 +145,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--atom_cutoff",
         type=float,
-        default=4.0,
+        default=5.0,
         help="Cutoff radius for atom graph",
     )
     parser.add_argument(
