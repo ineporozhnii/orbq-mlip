@@ -11,25 +11,19 @@ def read_pt(filecontent):
     atomic_numbers = data["atom_types"].detach().clone().long()
     cart_coords = data["coords"].detach().clone().float()
     
-    total_energy = data.get("total_energy")
+    total_energy = data.get("total_energy_corrected")
     total_energy = total_energy.detach().clone().float()
     
     orbital_charges_dxtb = data.get("dxtb_charges_orbital")
     orbital_charges_dxtb = orbital_charges_dxtb.detach().clone().float()
     
     atomic_charges_dxtb = data.get("dxtb_charges_atomic")
-    if atomic_charges_dxtb is not None:
-        atomic_charges_dxtb = torch.zeros_like(atomic_numbers, dtype=torch.float32)
     atomic_charges_dxtb = atomic_charges_dxtb.detach().clone().float()
     
     atomic_charges_mulliken = data.get("mulliken_charges")
-    if atomic_charges_mulliken is not None:
-        atomic_charges_mulliken = torch.zeros_like(atomic_numbers, dtype=torch.float32)
     atomic_charges_mulliken = atomic_charges_mulliken.detach().clone().float()
     
     atomic_charges_lowdin = data.get("lowdin_charges")
-    if atomic_charges_lowdin is not None:
-        atomic_charges_lowdin = torch.zeros_like(atomic_numbers, dtype=torch.float32)
     atomic_charges_lowdin = atomic_charges_lowdin.detach().clone().float()
         
     cell = torch.tensor([[100, 0, 0],
