@@ -4,6 +4,7 @@ import torch
 import dxtb
 from ase.io import read
 from tad_mctc.units import AA2AU
+from tad_mctc.data.getters import get_zvalence
 
 
 def load_xyz(filename: str) -> tuple[torch.Tensor, torch.Tensor]:
@@ -112,6 +113,20 @@ def calculate_dxtb(args: tuple):
     positions = data["coords"].detach().to(torch.double) * AA2AU  # Convert Angstroms to atomic units
     positions.requires_grad_(True)
     
+    # Extract charge and spin multiplicity
+    charge = data.get("charge", torch.tensor(0.0)).to(torch.double).squeeze()
+    multiplicity = data.get("spin", torch.tensor(1.0)).to(torch.double).squeeze()
+    unpaired = multiplicity - 1.0
+    
+    # Sanity check: Parity of electrons vs unpaired electrons
+    n_electrons = torch.sum(get_zvalence(numbers)) - charge
+    if int(n_electrons.item()) % 2 != int(unpaired.item()) % 2:
+        return None
+        
+    # Ensure batched shapes for dxtb
+    charge_t = charge.unsqueeze(0)
+    unpaired_t = unpaired.unsqueeze(0)
+    
     # Set up calculator configuration
     calc_config = {
         "dtype": torch.double,
@@ -125,7 +140,7 @@ def calculate_dxtb(args: tuple):
     # Measure calculation time
     start = time.time()
     try:
-        result = calc.singlepoint(positions)
+        result = calc.singlepoint(positions, charge=charge_t, spin=unpaired_t)
     except Exception as e:
         print(f"Error in calculation for molecule {molecule_id}: {e}")
         return None
@@ -146,7 +161,7 @@ def calculate_dxtb(args: tuple):
     S_true = calc.integrals.build_overlap(positions).squeeze()
     M_true = P_true @ S_true
     
-    n0, occ = get_refocc(calc.integrals.hcore.refocc, torch.tensor([0.0]), torch.tensor([0.0]), calc.ihelp)
+    n0, occ = get_refocc(calc.integrals.hcore.refocc, charge_t, unpaired_t, calc.ihelp)
     N0_mat = torch.diag(n0.squeeze())
     Q_true = N0_mat - M_true
     
