@@ -152,6 +152,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=self.batch_size.train,
             num_workers=self.num_workers.train,
             worker_init_fn=worker_init_fn,
+            pin_memory=True,
         )
     
     def val_dataloader(self):
@@ -161,6 +162,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=self.batch_size.val,
             num_workers=self.num_workers.val,
             worker_init_fn=worker_init_fn,
+            pin_memory=True,
         )
         
     def test_dataloader(self):
@@ -170,6 +172,7 @@ class DataModule(pl.LightningDataModule):
             batch_size=self.batch_size.val,
             num_workers=self.num_workers.val,
             worker_init_fn=worker_init_fn,
+            pin_memory=True,
         )
         
     def __repr__(self) -> str:
