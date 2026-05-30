@@ -231,6 +231,12 @@ class eSCN(nn.Module):
 
     def forward(self, data):
         device = data.coords.device
+        
+        if self.sphere_points.device != device:
+            print(f"Moving sphere points and weights to device {device}")
+            self.sphere_points = self.sphere_points.to(device)
+            self.sphharm_weights = [w.to(device) for w in self.sphharm_weights]
+
         self.batch_size = len(data.cell)
         self.dtype = data.coords.dtype
         atomic_numbers = data.atom_types.long()
@@ -255,9 +261,9 @@ class eSCN(nn.Module):
         )
 
         # Initialize the WignerD matrices and other values for spherical harmonic calculations
-        self.SO3_edge_rot = nn.ModuleList()
+        SO3_edge_rot = nn.ModuleList()
         for i in range(self.num_resolutions):
-            self.SO3_edge_rot.append(SO3_Rotation(edge_rot_mat, self.lmax_list[i]))
+            SO3_edge_rot.append(SO3_Rotation(edge_rot_mat, self.lmax_list[i]))
 
         ###############################################################
         # Initialize node embeddings
@@ -296,7 +302,7 @@ class eSCN(nn.Module):
                     atomic_numbers,
                     edge_distance,
                     edge_index,
-                    self.SO3_edge_rot,
+                    SO3_edge_rot,
                     mappingReduced,
                 )
 
@@ -310,7 +316,7 @@ class eSCN(nn.Module):
                     atomic_numbers,
                     edge_distance,
                     edge_index,
-                    self.SO3_edge_rot,
+                    SO3_edge_rot,
                     mappingReduced,
                 )
 

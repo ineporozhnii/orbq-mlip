@@ -32,9 +32,10 @@ class MultitaskLightningModule(LightningModule):
         self.ema = ExponentialMovingAverage(
             self.parameters(), decay=self.hparams.train.ema.decay
         )
-        self.distributed = (self.hparams.train.trainer.strategy == "ddp") and (
-            self.hparams.train.trainer.devices > 1
-        )
+        self.distributed = (
+            isinstance(self.hparams.train.trainer.strategy, str) and 
+            "ddp" in self.hparams.train.trainer.strategy.lower()
+        ) and (self.hparams.train.trainer.devices > 1)
         self.register_buffer(
             "scale_energy",
             torch.FloatTensor([self.hparams.metadata["energy_var"]]).sqrt(),
