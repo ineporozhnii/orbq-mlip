@@ -139,6 +139,7 @@ def run(cfg: DictConfig) -> str:
         datamodule.train_dataloader(),
         datamodule.val_dataloader(),
         ckpt_path=ckpt,
+        weights_only=False,
     )
 
     if (

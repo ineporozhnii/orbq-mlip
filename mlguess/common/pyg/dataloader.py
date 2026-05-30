@@ -77,6 +77,7 @@ class DataLoader(torch.utils.data.DataLoader):
         # Save for PyTorch Lightning < 1.6:
         self.follow_batch = follow_batch
         self.exclude_keys = exclude_keys
+        self._yielded_batches = 0
 
         super().__init__(
             dataset,
@@ -85,3 +86,18 @@ class DataLoader(torch.utils.data.DataLoader):
             collate_fn=Collater(follow_batch, exclude_keys),
             **kwargs,
         )
+
+    def __iter__(self):
+        iterator = super().__iter__()
+        for i, batch in enumerate(iterator):
+            if i < self._yielded_batches:
+                continue
+            self._yielded_batches += 1
+            yield batch
+        self._yielded_batches = 0
+
+    def state_dict(self):
+        return {"yielded_batches": getattr(self, "_yielded_batches", 0)}
+
+    def load_state_dict(self, state_dict):
+        self._yielded_batches = state_dict.get("yielded_batches", 0)
