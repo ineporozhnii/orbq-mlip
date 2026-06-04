@@ -1,8 +1,11 @@
-_target_: mlguess.model.module.EnergyChargesLightningModule
+_target_: mlguess.model.module.MultitaskLightningModule
 
-criterion: mse
-target_property: 'combined'
+criterion: mae
 charges_type: 'orbital_dxtb' # orbital_dxtb, atomic_dxtb, atomic_mulliken, atomic_lowdin, none
+loss_coeffs:
+  energy: 1.0
+  charges: 10.9
+  forces: 1.8
 pbc: false
 dft_basis_set: 'gfn1'
 concat_basis: false

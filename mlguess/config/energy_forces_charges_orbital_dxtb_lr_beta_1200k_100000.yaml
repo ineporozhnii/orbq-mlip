@@ -1,0 +1,33 @@
+# metadata specialised for each experiment
+core:
+  expname: omol25_neutral_metal_energy_forces_charges_orbital_dxtb_lr_beta1200k_100000
+  project_name: mlguess
+  storage_dir: ${core.expname}
+  version: 0.0.1
+  tags: null
+
+hydra:
+  run:
+    dir: ./
+  sweep:
+    dir: ./
+    subdir: ./
+
+  # Not saving the .hydra directory
+  output_subdir: null
+
+  job:
+    env_set:
+      WANDB_START_METHOD: thread
+      WANDB_DIR: ./
+
+  defaults:
+    # Disable hydra logging configuration, otherwise the basicConfig does not have any effect
+    - override job_logging: none
+    - override hydra_logging: none
+
+defaults:
+  - data: omol_100000
+  - model: energy_forces_charges_orbital_dxtb_100000
+  - train: default_lr_beta1200k
+  - _self_ # as last argument to allow the override of parameters via this main config
