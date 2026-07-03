@@ -199,9 +199,9 @@ class eSCN(nn.Module):
                     irreps_in, max_n_orbitals_per_L=self.max_n_orbitals_per_L
                 )
 
-            # self.atomic_charge_block = AtomicChargeBlock(
-            #     self.sphere_channels_all, self.num_sphere_samples, self.act
-            # )
+            self.atomic_charge_block = AtomicChargeBlock(
+                self.sphere_channels_all, self.num_sphere_samples, self.act
+            )
 
         self.energy_block = EnergyBlock(
             self.sphere_channels_all, self.num_sphere_samples, self.act
@@ -380,10 +380,10 @@ class eSCN(nn.Module):
         ################################################################
         # Atomic Charge prediction
         ################################################################
-       #if getattr(self, "regress_charges", True):
-       #     node_charges = self.atomic_charge_block(x_pt_energy).flatten()
-       # else:
-        node_charges = None
+        if getattr(self, "regress_charges", True):
+            node_charges = self.atomic_charge_block(x_pt_energy).flatten()
+        else:
+            node_charges = None
 
         if getattr(self, "regress_forces", False):
             forces = self.force_block(x_pt_energy, self.sphere_points)
