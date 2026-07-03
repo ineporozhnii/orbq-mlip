@@ -8,6 +8,7 @@ trainer:
   fast_dev_run: False
   accelerator: 'gpu'
   strategy: 'ddp'
+  strategy: 'ddp_find_unused_parameters_true'
   devices: 4
   precision: 32
   max_steps: 400000
