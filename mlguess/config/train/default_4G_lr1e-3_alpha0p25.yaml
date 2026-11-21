@@ -7,7 +7,6 @@ freeze_backbone: False
 trainer:
   fast_dev_run: False
   accelerator: 'gpu'
-  strategy: 'ddp'
   strategy: 'ddp_find_unused_parameters_true'
   devices: 4
   precision: 32

@@ -1,7 +1,7 @@
 _target_: mlguess.model.module.MultitaskLightningModule
 
 criterion: mae
-charges_type: 'orbital_dxtb' # orbital_dxtb, atomic_dxtb, atomic_mulliken, atomic_lowdin, none
+charges_type: 'atomic_lowdin' # orbital_dxtb, atomic_dxtb, atomic_mulliken, atomic_lowdin, none
 loss_coeffs:
   energy: 1.0
   charges: 6.7
