@@ -22,6 +22,25 @@ torch.set_float32_matmul_precision("high")
 # os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
 
 
+def load_model_from_checkpoint(ckpt_path: Path):
+    """Load a trusted local Lightning checkpoint that contains OmegaConf metadata.
+
+    Lightning 2.5+ / PyTorch 2.6 defaults to weights_only=True, which breaks on
+    these older checkpoints. We explicitly deserialize the checkpoint with
+    weights_only=False and then restore the model + EMA state dict manually.
+    """
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    hparams = checkpoint.get("hyper_parameters")
+    if hparams is None:
+        raise KeyError(f"Checkpoint <{ckpt_path}> has no 'hyper_parameters'.")
+
+    model = MultitaskLightningModule(**hparams)
+    model.load_state_dict(checkpoint["state_dict"], strict=True)
+    if "ema_state_dict" in checkpoint:
+        model.ema.load_state_dict(checkpoint["ema_state_dict"])
+    return model
+
+
 def main(
     ckpt_path,
     data_path,
@@ -80,9 +99,7 @@ def main(
     # pylint: disable=E1120
     print(f"Loading checkpoint from {ckpt}")
     pylogger.info(f"loaded checkpoint: {ckpt}")
-    model = MultitaskLightningModule.load_from_checkpoint(checkpoint_path=ckpt).to(
-        "cuda"
-    )
+    model = load_model_from_checkpoint(Path(ckpt)).to("cuda")
     model.eval()
     model.ema.copy_to(model.parameters())
 

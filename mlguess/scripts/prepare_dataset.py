@@ -485,7 +485,7 @@ def main():
     hist_plot_path = base_dir / "corrected_energies_histogram.png"
 
     # Adjust variables here for number of structures to include in each split step
-    TRAIN_SIZES = [1000, 3000, 10000, 30000, 100000, 535183]
+    TRAIN_SIZES = [1000, 3000, 10000, 30000, 100000, 617554]
     N_VAL = 10000
     N_TEST = 50000
 
