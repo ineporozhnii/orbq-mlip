@@ -1,20 +1,17 @@
+# orbital charges only, equivariant charge head (Fig. 1b)
 _target_: orbq.model.module.MultitaskLightningModule
+name: charges_orbital_dxtb
 
 criterion: mae
-target_property: 'charges'
-charges_type: 'orbital_dxtb' # orbital_dxtb, atomic_dxtb, atomic_mulliken, atomic_lowdin, none
+charges_type: orbital_dxtb  # none | orbital_dxtb | atomic_dxtb | atomic_lowdin | atomic_mulliken
 loss_coeffs:
   energy: 0.0
   charges: 1.0
   forces: 0.0
+
 pbc: false
-dft_basis_set: 'gfn1'
-concat_basis: false
-beta: 2.0
-lmax_restriction: true
-lmax_relax: 0
-uncontracted: true
+dft_basis_set: gfn1  # GFN1-xTB basis defines the orbital layout of the charge head
 orb_cutoff: 5.0
 
 defaults:
-  - model: escn_energy_charges
+  - backbone@model: escn_charges

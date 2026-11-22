@@ -1,42 +1,10 @@
 import os
-import signal
 from pathlib import Path
 from typing import Optional
 
 import dotenv
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 from omegaconf import DictConfig, OmegaConf
-
-
-# This is the function that will be called when the timeout happens
-def timeout_handler(signum, frame):
-    raise TimeoutError("Function call timed out")
-
-
-# This is a decorator to add timeout functionality
-def timeout(seconds):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            # Set the signal handler and a 5-second alarm
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(seconds)
-
-            try:
-                # This try/except clause is used to catch the TimeoutError
-                # and to turn off the alarm in case the function finished
-                # before the timeout
-                result = func(*args, **kwargs)
-            except TimeoutError as te:
-                print(te, seconds)
-                return None
-            finally:
-                # Disable the alarm
-                signal.alarm(0)
-            return result
-
-        return wrapper
-
-    return decorator
 
 
 def get_env(env_name: str, default: Optional[str] = None) -> str:
@@ -66,16 +34,7 @@ def get_env(env_name: str, default: Optional[str] = None) -> str:
 
 
 def load_envs(env_file: Optional[str] = ".env") -> None:
-    """
-    Load all the environment variables defined in the `env_file`.
-    This is equivalent to `. env_file` in bash.
-
-    It is possible to define all the system specific variables in the `env_file`.
-
-    :param env_file: the file that defines the environment variables to use. If None
-                     it searches for a `.env` file in the project.
-    """
-    print(dotenv.find_dotenv(env_file, raise_error_if_not_found=True))
+    """Load the environment variables defined in `env_file` (like `. env_file` in bash)."""
     dotenv.load_dotenv(dotenv_path=env_file, override=True)
 
 
@@ -116,11 +75,11 @@ def log_hyperparameters(
     trainer.logger.log_hyperparams = lambda params: None
 
 
-# Load environment variables
-load_envs()
+# Optional `.env` file (searched from the working directory upwards), e.g. with
+# ORBQ_DATA_DIR=/path/to/orbq_data and WANDB_* settings.
+_env_file = dotenv.find_dotenv(usecwd=True)
+if _env_file:
+    dotenv.load_dotenv(_env_file, override=False)
 
-# Set the cwd to the project root
-PROJECT_ROOT: Path = Path(get_env("PROJECT_ROOT"))
-# DATA_DIR: Path = Path(get_env("DATA_DIR"))
-if PROJECT_ROOT.exists():
-    os.chdir(PROJECT_ROOT)
+# Root of the repository / source tree (contains the `orbq` package).
+PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]

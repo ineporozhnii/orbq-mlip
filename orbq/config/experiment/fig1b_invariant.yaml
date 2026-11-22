@@ -1,0 +1,11 @@
+# @package _global_
+# Fig. 1b: orbital-charge-only training, invariant charge head.
+# The paper compares both heads at data.train_size=3000 and 100000.
+defaults:
+  - override /model: charges_orbital_dxtb_invariant
+
+train:
+  trainer:
+    max_steps: 500000
+  lr_scheduler:
+    beta: 400000

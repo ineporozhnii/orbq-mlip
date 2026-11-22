@@ -1,0 +1,26 @@
+# OMol25 neutral singlet metal complexes with GFN1-xTB orbital charges.
+# Produced by `orbq-datagen` (see README); set ORBQ_DATA_DIR to its output folder:
+#   $ORBQ_DATA_DIR/lmdb/data.*.lmdb               (orbq-datagen preprocess --out_path)
+#   $ORBQ_DATA_DIR/splits/datasplits_<N>.json     (orbq-datagen prepare)
+_target_: orbq.data.datamodule.DataModule
+
+# nested training subset; validation (10k) and test (50k) sets are shared by all sizes
+train_size: 100000
+root: ${oc.env:ORBQ_DATA_DIR}
+
+dataset:
+  _target_: orbq.data.dataset.LmdbDataset
+  path: ${data.root}/lmdb
+
+split_file: ${data.root}/splits/datasplits_${data.train_size}.json
+# normalization statistics of the training split (computed on first use)
+metadata_file: ${data.root}/lmdb/metadata_${data.train_size}.json
+
+num_workers:
+  train: 4
+  val: 4
+  test: 4
+batch_size:
+  train: 3
+  val: 3
+  test: 3

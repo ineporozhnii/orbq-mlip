@@ -14,7 +14,7 @@ from omegaconf import DictConfig, ListConfig
 from lightning.pytorch import seed_everything
 from lightning.pytorch.loggers import WandbLogger, TensorBoardLogger
 
-from orbq.common.system import log_hyperparameters, PROJECT_ROOT
+from orbq.common.system import log_hyperparameters
 
 # NOTE: disable slurm detection of lightning
 from lightning.pytorch.plugins.environments import SLURMEnvironment
@@ -55,6 +55,10 @@ def run(cfg: DictConfig) -> str:
     Returns:
         the run directory inside the storage_dir used by the current experiment
     """
+    # Resolve interpolations up front: model/train sub-configs reference root keys
+    # (e.g. data.train_size) and are later passed to the LightningModule on their own.
+    omegaconf.OmegaConf.resolve(cfg)
+
     if cfg.train.deterministic:
         seed_everything(cfg.train.seed)
 
@@ -155,7 +159,7 @@ def run(cfg: DictConfig) -> str:
 
 
 @hydra.main(
-    config_path=str(PROJECT_ROOT / "orbq" / "config"),
+    config_path="../config",
     config_name="default",
     version_base="1.1",
 )
@@ -164,5 +168,4 @@ def main(cfg: omegaconf.DictConfig):
 
 
 if __name__ == "__main__":
-    # pylint: disable=E1120
     main()

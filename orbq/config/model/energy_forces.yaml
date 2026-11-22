@@ -1,19 +1,23 @@
+# energy + forces
 _target_: orbq.model.module.MultitaskLightningModule
+name: energy_forces
 
 criterion: mae
-charges_type: 'none' # orbital_dxtb, atomic_dxtb, atomic_mulliken, atomic_lowdin, none
+charges_type: none  # none | orbital_dxtb | atomic_dxtb | atomic_lowdin | atomic_mulliken
+# loss weights tuned per training-set size; other sizes use the 100k values
 loss_coeffs:
-  energy: 1.0
-  charges: 0.0
-  forces: 1.7
+  energy: ${oc.select:model.loss_coeffs_by_train_size.n${data.train_size}.energy,${model.loss_coeffs_by_train_size.n100000.energy}}
+  charges: ${oc.select:model.loss_coeffs_by_train_size.n${data.train_size}.charges,${model.loss_coeffs_by_train_size.n100000.charges}}
+  forces: ${oc.select:model.loss_coeffs_by_train_size.n${data.train_size}.forces,${model.loss_coeffs_by_train_size.n100000.forces}}
+loss_coeffs_by_train_size:
+  n3000: {energy: 1.0, charges: 0.0, forces: 1.6}
+  n10000: {energy: 1.0, charges: 0.0, forces: 1.8}
+  n30000: {energy: 1.0, charges: 0.0, forces: 2.0}
+  n100000: {energy: 1.0, charges: 0.0, forces: 2.2}
+
 pbc: false
-dft_basis_set: 'gfn1'
-concat_basis: false
-beta: 2.0
-lmax_restriction: true
-lmax_relax: 0
-uncontracted: true
+dft_basis_set: gfn1  # GFN1-xTB basis defines the orbital layout of the charge head
 orb_cutoff: 5.0
 
 defaults:
-  - model: escn_energy_forces
+  - backbone@model: escn_energy_forces

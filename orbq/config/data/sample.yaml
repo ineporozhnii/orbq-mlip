@@ -1,0 +1,14 @@
+# 23 OMol25 metal complexes bundled with the repository (tests/data/omol25_sample)
+# for smoke tests:  orbq-train data=sample train=smoke
+defaults:
+  - omol
+  - _self_
+
+train_size: 15
+root: ${orbq_root:}/tests/data/omol25_sample
+metadata_file: ${data.root}/metadata.json
+
+num_workers:
+  train: 0
+  val: 0
+  test: 0

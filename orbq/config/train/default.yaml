@@ -1,3 +1,5 @@
+# Training settings used in the paper (1x H100 per run).
+
 # reproducibility
 seed: 0
 deterministic: True
@@ -6,11 +8,11 @@ freeze_backbone: False
 # PyTorch Lightning Trainer
 trainer:
   fast_dev_run: False
-  accelerator: 'gpu'
+  accelerator: auto
   strategy: auto
   devices: 1
   precision: 32
-  max_steps: 500000
+  max_steps: ${oc.select:train.schedule_by_train_size.n${data.train_size}.max_steps,${train.schedule_by_train_size.n100000.max_steps}}
   num_sanity_val_steps: 2
   gradient_clip_val: 1.0
   val_check_interval: 5000
@@ -28,15 +30,18 @@ lr_scheduler:
   _target_: orbq.model.utils.PowerDecayScheduler
   warmup_steps: 1000
   alpha: 0.5
-  beta: 400000
+  beta: ${oc.select:train.schedule_by_train_size.n${data.train_size}.lr_decay_beta,${train.schedule_by_train_size.n100000.lr_decay_beta}}
 lr_schedule_freq: 1
+
+# training length and LR decay per training-set size (other sizes use the 100k values)
+schedule_by_train_size:
+  n3000: {max_steps: 500000, lr_decay_beta: 400000}
+  n10000: {max_steps: 500000, lr_decay_beta: 400000}
+  n30000: {max_steps: 500000, lr_decay_beta: 400000}
+  n100000: {max_steps: 1500000, lr_decay_beta: 1200000}
 
 ema:
   decay: 0.995
-
-restore:
-  ckpt_or_run_path: null
-  mode: null # nuall, finetune, hotstart, continue
 
 monitor:
   metric: 'loss/val'
@@ -62,17 +67,13 @@ callbacks:
     refresh_rate: 20
 
 logging:
-  upload:
-    run_files: true
-    source: true
-
   wandb:
     name: ${core.expname}
     project: ${core.project_name}
     entity: null
-    mode: 'offline'
+    mode: offline  # online | offline | disabled
     tags: ${core.tags}
- 
+
   wandb_watch:
     log: 'all'
     log_freq: 100

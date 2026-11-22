@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 import hydra
 import numpy as np
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 import torch
 from omegaconf import DictConfig
 from torch.utils.data import Dataset, Subset
@@ -39,7 +39,20 @@ class DataModule(pl.LightningDataModule):
         num_workers: DictConfig,
         batch_size: DictConfig,
         metadata_file: Optional[str] = None,
+        train_size: Optional[int] = None,
+        root: Optional[str] = None,
     ):
+        """
+        Args:
+            dataset: Hydra config of the dataset (e.g. ``LmdbDataset``).
+            split_file: JSON file with ``train`` / ``validation`` / ``test`` indices.
+            num_workers: dataloader workers per split.
+            batch_size: batch size per split.
+            metadata_file: normalization statistics of the training split; computed
+                and written there if missing (default: ``<dataset path>/metadata.json``).
+            train_size, root: bookkeeping keys of the data config (used only for
+                interpolation of the paths above).
+        """
         super().__init__()
         self.dataset = dataset
         with open(split_file, "r") as fp:
