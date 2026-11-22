@@ -103,7 +103,7 @@ class eSCN(nn.Module):
         self.sphere_channels_all: int = self.num_resolutions * self.sphere_channels
         self.basis_width_scalar = basis_width_scalar
         self.distance_function = distance_function
-        self.device = torch.cuda.current_device()
+        self.device = "cpu"  # sphere points are moved to the input device in forward()
 
         # variables used for display purposes
         self.counter = 0

@@ -7,7 +7,6 @@ https://github.com/kyonofx/scdp/blob/main/scdp/model/basis_set.py
 
 import os
 import itertools
-import basis_set_exchange as bse
 import numpy as np
 
 from mlguess.common.constants import orbital_config
@@ -17,9 +16,11 @@ def get_basis_set(name="def2-universal-JKFIT"):
     """
     get basis set from local xTB or BSE.
     """
-    if name in ["gfn1", "gfn2"]:
+    if name == "gfn1":
         basis = load_xtb_basis(name)
     else:
+        import basis_set_exchange as bse  # optional: only needed for non-xTB basis sets
+
         basis = bse.get_basis(name)
         all_elems = basis["elements"].keys()
         for k in all_elems:
@@ -213,13 +214,11 @@ def aug_etb_for_basis(basis, beta=2.0, lmax_restriction=False, lmax_relax=0):
 def load_xtb_basis(name):
     """
     Load xTB basis set from the local folder.
-    The basis files should be in NWChem format and placed in the 'basis_sets/gfn1' and 'basis_sets/gfn2' folders respectively.
+    The basis files should be in NWChem format and placed in the 'basis_sets/gfn1' folder.
     """
     if name == "gfn1":
         folder_path = os.path.join(os.path.dirname(__file__), "basis_sets", "gfn1")
 
-    elif name == "gfn2":
-        folder_path = os.path.join(os.path.dirname(__file__), "basis_sets", "gfn2")
     else:
         raise ValueError(f"Unknown basis set name: {name}")
 

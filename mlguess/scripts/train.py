@@ -144,7 +144,7 @@ def run(cfg: DictConfig) -> str:
 
     if (
         datamodule.test_dataset is not None
-        and trainer.checkpoint_callback.best_model_path is not None
+        and trainer.checkpoint_callback.best_model_path
     ):
         pylogger.info("starting testing.")
         trainer.test(dataloaders=[datamodule.test_dataloader()])
