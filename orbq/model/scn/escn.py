@@ -223,7 +223,6 @@ class eSCN(nn.Module):
         device = data.coords.device
 
         if self.sphere_points.device != device:
-            print(f"Moving sphere points and weights to device {device}")
             self.sphere_points = self.sphere_points.to(device)
             self.sphharm_weights = [w.to(device) for w in self.sphharm_weights]
 

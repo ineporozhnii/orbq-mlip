@@ -1,3 +1,5 @@
+import logging
+
 import torch
 from hydra.utils import instantiate
 from lightning import LightningModule
@@ -6,6 +8,8 @@ from torch_ema import ExponentialMovingAverage
 from orbq.common.utils import scatter
 from orbq.model.basis_set import get_basis_set, transform_basis_set
 from orbq.model.gtos import GTOs
+
+log = logging.getLogger(__name__)
 
 
 class MultitaskLightningModule(LightningModule):
@@ -537,8 +541,9 @@ class MultitaskLightningModule(LightningModule):
             if "ema_state_dict" in checkpoint:
                 self.ema.load_state_dict(checkpoint["ema_state_dict"])
         except Exception as e:
-            print(e)
-            print("Failed to load EMA state dict. Please make sure this was intended.")
+            log.warning(
+                "Failed to load EMA state dict (%s). Please make sure this was intended.", e
+            )
 
     def on_validation_epoch_start(self):
         self.ema.store()
@@ -559,17 +564,17 @@ class MultitaskLightningModule(LightningModule):
         self.log("trainer/grad_norm", total_norm)
 
     def freeze_backbone(self):
-        print("Freezing backbone (all layers except EnergyBlock)...")
+        log.info("Freezing backbone (all layers except EnergyBlock)...")
         for param in self.model.parameters():
             param.requires_grad = False
 
         found_energy_block = False
         for name, module in self.model.named_modules():
             if "EnergyBlock" in module.__class__.__name__:
-                print(f"Unfreezing module: {name} ({module.__class__.__name__})")
+                log.info("Unfreezing module: %s (%s)", name, module.__class__.__name__)
                 for param in module.parameters():
                     param.requires_grad = True
                 found_energy_block = True
 
         if not found_energy_block:
-            print("Warning: EnergyBlock not found! All parameters are frozen.")
+            log.warning("EnergyBlock not found! All parameters are frozen.")
