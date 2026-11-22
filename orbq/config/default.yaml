@@ -1,0 +1,38 @@
+# Entry config for `orbq-train` (python -m orbq.scripts.train).
+#
+# Paper runs:  orbq-train model=<setting> data.train_size=<3000|10000|30000|100000> train.seed=<0|1|2>
+# settings:    energy, energy_forces, energy_forces_charges_orbital_dxtb,
+#              energy_forces_charges_atomic_dxtb, energy_forces_charges_atomic_lowdin,
+#              energy_forces_charges_atomic_mulliken
+# Fig. 1b:     orbq-train experiment=fig1b_equivariant | experiment=fig1b_invariant
+
+core:
+  expname: ${model.name}_${data.train_size}_seed${train.seed}
+  project_name: orbq-mlip
+  storage_dir: runs/${core.expname}
+  version: 0.1.0
+  tags: null
+
+hydra:
+  run:
+    dir: ./
+  sweep:
+    dir: ./
+    subdir: ./
+  # do not write a .hydra directory
+  output_subdir: null
+  job:
+    env_set:
+      WANDB_START_METHOD: thread
+      WANDB_DIR: ./
+  defaults:
+    # keep Python's logging configuration
+    - override job_logging: none
+    - override hydra_logging: none
+
+defaults:
+  - data: omol
+  - model: energy_forces_charges_orbital_dxtb
+  - train: default
+  - optional experiment: null
+  - _self_

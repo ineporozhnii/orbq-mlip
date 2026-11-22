@@ -1,0 +1,14 @@
+# conda env create -f environment.yml && conda activate orbq
+# Adjust pytorch-cuda to your driver, or replace the pytorch lines with a CPU build.
+name: orbq
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch>=2.1
+  - pytorch-cuda=12.1
+  - pip
+  - pip:
+      - -e .[datagen,analysis,dev]

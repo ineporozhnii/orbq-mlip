@@ -173,10 +173,27 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .vscode
+.idea/
 
-datasets/
-results*/
-notebooks/
+# --- orbq-mlip project files ---
+# Patterns are anchored to the repository root on purpose: an unanchored `data/`
+# also matches orbq/data/ and orbq/config/data/.
+/data/
+/datasets/
+/results*/
+/notebooks/
+/manuscript/
+/literature/
+/runs/
+/outputs/
+/multirun/
 wandb/
-runs/
-data/
+lightning_logs/
+
+# training / evaluation artifacts
+*.ckpt
+*.out
+nohup*.out
+*.lmdb
+*.lmdb-lock
+!tests/data/**/*.lmdb

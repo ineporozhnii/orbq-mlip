@@ -1,0 +1,24 @@
+# Few-step CPU run for smoke tests:  orbq-train data=sample train=smoke
+defaults:
+  - default
+  - _self_
+
+trainer:
+  accelerator: cpu
+  max_steps: 2
+  val_check_interval: 1
+  limit_val_batches: 1
+  limit_test_batches: 1
+  num_sanity_val_steps: 0
+  deterministic: false
+
+callbacks:
+  - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+    dirpath: ${core.storage_dir}
+    save_last: true
+    monitor: ${train.monitor.metric}
+    mode: ${train.monitor.mode}
+
+logging:
+  wandb:
+    mode: disabled

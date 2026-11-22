@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orbq-mlip"
+version = "0.1.0"
+description = "Multitask learning with semiempirical (GFN1-xTB) orbital charges for sample-efficient machine learning interatomic potentials"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Ihor Neporozhnii" },
+    { name = "Sjoerd Hoogland" },
+    { name = "Oleksandr Voznyy" },
+]
+requires-python = ">=3.10"
+keywords = ["machine learning interatomic potentials", "equivariant neural networks", "multitask learning", "xtb", "orbital charges", "OMol25"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Install a PyTorch build that matches your CUDA version first (https://pytorch.org).
+dependencies = [
+    "torch>=2.1",
+    "lightning>=2.6,<3",
+    "e3nn>=0.4.4,<0.6",
+    "hydra-core>=1.3,<1.4",
+    "omegaconf>=2.3",
+    "torch-ema>=0.3",
+    "basis-set-exchange>=0.9",
+    "lmdb>=1.4",
+    "lz4>=4.3",
+    "numpy>=1.24",
+    "tqdm",
+    "matplotlib",
+    "wandb",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+# data generation (orbq-datagen): dxtb for GFN1-xTB labels, fairchem to read OMol25
+datagen = ["dxtb>=0.3,<0.5", "scikit-learn", "fairchem-core"]
+# figure scripts in analysis/
+analysis = ["umap-learn>=0.5,<0.6", "adjustText", "pandas"]
+dev = ["pytest>=7", "ruff>=0.5"]
+
+[project.urls]
+"Paper (Sim2Science @ NeurIPS 2026)" = "https://openreview.net/forum?id=hSiJO1ssmO"
+"Paper (Agentic Systems for Molecular Sciences @ NeurIPS 2026)" = "https://openreview.net/forum?id=6RA1r4UTXa"
+Repository = "https://github.com/ineporozhnii/orbq-mlip"
+
+[project.scripts]
+orbq-train = "orbq.scripts.train:main"
+orbq-test = "orbq.scripts.test:cli"
+orbq-datagen = "orbq.datagen.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["orbq*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+orbq = ["config/**/*.yaml", "model/basis_sets/gfn1/*.nwchem", "model/scn/Jd.pt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["dxtb: requires the datagen extra (dxtb)"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+# E501: long lines are left to the formatter; B006: list defaults are never mutated
+ignore = ["E501", "E741", "E731", "E402", "B006", "B008", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+# trimmed copy of PyTorch Geometric, kept close to upstream
+"orbq/common/pyg/*" = ["B"]
