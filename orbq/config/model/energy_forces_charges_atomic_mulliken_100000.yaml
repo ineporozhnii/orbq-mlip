@@ -1,0 +1,19 @@
+_target_: orbq.model.module.MultitaskLightningModule
+
+criterion: mae
+charges_type: 'atomic_mulliken' # orbital_dxtb, atomic_dxtb, atomic_mulliken, atomic_lowdin, none
+loss_coeffs:
+  energy: 1.0
+  charges: 0.9
+  forces: 2.2
+pbc: false
+dft_basis_set: 'gfn1'
+concat_basis: false
+beta: 2.0
+lmax_restriction: true
+lmax_relax: 0
+uncontracted: true
+orb_cutoff: 5.0
+
+defaults:
+  - model: escn

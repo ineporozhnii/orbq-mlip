@@ -1,0 +1,78 @@
+# reproducibility
+seed: 0
+deterministic: True
+freeze_backbone: False
+
+# PyTorch Lightning Trainer
+trainer:
+  fast_dev_run: False
+  accelerator: 'gpu'
+  strategy: 'ddp'
+  devices: 4
+  precision: 32
+  max_steps: 400000
+  num_sanity_val_steps: 2
+  gradient_clip_val: 1.0
+  val_check_interval: 5000
+  deterministic: ${train.deterministic}
+  check_val_every_n_epoch: null
+
+optim:
+  _target_: torch.optim.AdamW
+  lr: 1e-3
+  betas: [0.9, 0.999]
+  eps: 1e-08
+  weight_decay: 0.01
+
+lr_scheduler:
+  _target_: orbq.model.utils.PowerDecayScheduler
+  warmup_steps: 1000
+  alpha: 0.5
+  beta: 400000
+lr_schedule_freq: 1
+
+ema:
+  decay: 0.995
+
+restore:
+  ckpt_or_run_path: null
+  mode: null # nuall, finetune, hotstart, continue
+
+monitor:
+  metric: 'loss/val'
+  mode: 'min'
+
+callbacks:
+  - _target_: orbq.model.utils.PredictionScatterPlotCallback
+    log_interval: 1
+
+  - _target_: lightning.pytorch.callbacks.ModelCheckpoint
+    dirpath: ${core.storage_dir}
+    save_top_k: 2
+    save_last: True
+    verbose: False
+    monitor: ${train.monitor.metric}
+    mode: ${train.monitor.mode}
+
+  - _target_: lightning.pytorch.callbacks.LearningRateMonitor
+    logging_interval: "step"
+    log_momentum: False
+
+  - _target_: lightning.pytorch.callbacks.progress.tqdm_progress.TQDMProgressBar
+    refresh_rate: 20
+
+logging:
+  upload:
+    run_files: true
+    source: true
+
+  wandb:
+    name: ${core.expname}
+    project: ${core.project_name}
+    entity: null
+    mode: 'offline'
+    tags: ${core.tags}
+ 
+  wandb_watch:
+    log: 'all'
+    log_freq: 100
