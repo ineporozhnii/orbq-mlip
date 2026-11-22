@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "orbq-mlip: multitask learning with semiempirical orbital charges"
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/ineporozhnii/orbq-mlip"
+version: 0.1.0
+authors:
+  - family-names: Neporozhnii
+    given-names: Ihor
+  - family-names: Hoogland
+    given-names: Sjoerd
+  - family-names: Voznyy
+    given-names: Oleksandr
+preferred-citation:
+  type: conference-paper
+  title: "Multitask learning with semiempirical orbital charges enables sample-efficient MLIPs"
+  authors:
+    - family-names: Neporozhnii
+      given-names: Ihor
+    - family-names: Hoogland
+      given-names: Sjoerd
+    - family-names: Voznyy
+      given-names: Oleksandr
+  collection-title: "Sim2Science: ML with Imperfect Scientific Models (NeurIPS 2026 Workshop)"
+  year: 2026
+  url: "https://openreview.net/forum?id=hSiJO1ssmO"

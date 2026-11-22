@@ -158,8 +158,11 @@ def run(cfg: DictConfig) -> str:
         logger.experiment.finish()
 
 
+CONFIG_DIR = str(Path(__file__).resolve().parents[1] / "config")
+
+
 @hydra.main(
-    config_path="../config",
+    config_path=CONFIG_DIR,
     config_name="default",
     version_base="1.1",
 )
