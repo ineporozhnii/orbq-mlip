@@ -8,7 +8,6 @@ LICENSE file in the root directory of this source tree.
 import os
 
 import torch
-import torch.nn as nn
 
 try:
     from e3nn import o3
@@ -19,7 +18,7 @@ except ImportError:
 # Borrowed from e3nn @ 0.4.0:
 # https://github.com/e3nn/e3nn/blob/0.4.0/e3nn/o3/_wigner.py#L10
 # _Jd is a list of tensors of shape (2l+1, 2l+1)
-_Jd = torch.load(os.path.join(os.path.dirname(__file__), "Jd.pt"))
+_Jd = torch.load(os.path.join(os.path.dirname(__file__), "Jd.pt"), weights_only=True)
 
 
 class CoefficientMapping:
@@ -59,17 +58,13 @@ class CoefficientMapping:
                 mmax = min(self.mmax_list[i], l)
                 m = torch.arange(-mmax, mmax + 1, device=self.device).long()
                 self.m_complex = torch.cat([self.m_complex, m], dim=0)
-                self.m_harmonic = torch.cat(
-                    [self.m_harmonic, torch.abs(m).long()], dim=0
-                )
+                self.m_harmonic = torch.cat([self.m_harmonic, torch.abs(m).long()], dim=0)
                 self.l_harmonic = torch.cat([self.l_harmonic, m.fill_(l).long()], dim=0)
             self.res_size[i] = len(self.l_harmonic) - offset
             offset = len(self.l_harmonic)
 
         num_coefficients = len(self.l_harmonic)
-        self.to_m = torch.zeros(
-            [num_coefficients, num_coefficients], device=self.device
-        )
+        self.to_m = torch.zeros([num_coefficients, num_coefficients], device=self.device)
         self.m_size = torch.zeros([max(self.mmax_list) + 1], device=self.device).long()
 
         # The following is implemented poorly - very slow. It only gets called
@@ -250,9 +245,7 @@ class SO3_Embedding(torch.nn.Module):
             embedding_rotate = torch.cat(
                 [
                     embedding_rotate,
-                    SO3_rotation[i].rotate_inv(
-                        embedding_i, self.lmax_list[i], self.mmax_list[i]
-                    ),
+                    SO3_rotation[i].rotate_inv(embedding_i, self.lmax_list[i], self.mmax_list[i]),
                 ],
                 dim=1,
             )
@@ -297,16 +290,15 @@ class SO3_Embedding(torch.nn.Module):
     def _grid_act(self, SO3_grid, act, mappingReduced):
         offset = 0
         for i in range(self.num_resolutions):
-
             num_coefficients = mappingReduced.res_size[i]
 
             x_res = self.embedding[:, offset : offset + num_coefficients].contiguous()
-            to_grid_mat = SO3_grid[self.lmax_list[i]][
-                self.mmax_list[i]
-            ].get_to_grid_mat(self.device)
-            from_grid_mat = SO3_grid[self.lmax_list[i]][
-                self.mmax_list[i]
-            ].get_from_grid_mat(self.device)
+            to_grid_mat = SO3_grid[self.lmax_list[i]][self.mmax_list[i]].get_to_grid_mat(
+                self.device
+            )
+            from_grid_mat = SO3_grid[self.lmax_list[i]][self.mmax_list[i]].get_from_grid_mat(
+                self.device
+            )
 
             x_grid = torch.einsum("bai,zic->zbac", to_grid_mat, x_res)
             x_grid = act(x_grid)
@@ -505,9 +497,7 @@ class SO3_Grid(torch.nn.Module):
             device=device,
         )
 
-        self.to_grid_mat = torch.einsum(
-            "mbi,am->bai", to_grid.shb, to_grid.sha
-        ).detach()
+        self.to_grid_mat = torch.einsum("mbi,am->bai", to_grid.shb, to_grid.sha).detach()
         self.to_grid_mat = self.to_grid_mat[
             :, :, self.mapping.coefficient_idx(self.lmax, self.mmax)
         ]
@@ -519,9 +509,7 @@ class SO3_Grid(torch.nn.Module):
             device=device,
         )
 
-        self.from_grid_mat = torch.einsum(
-            "am,mbi->bai", from_grid.sha, from_grid.shb
-        ).detach()
+        self.from_grid_mat = torch.einsum("am,mbi->bai", from_grid.sha, from_grid.shb).detach()
         self.from_grid_mat = self.from_grid_mat[
             :, :, self.mapping.coefficient_idx(self.lmax, self.mmax)
         ]
@@ -548,8 +536,6 @@ class SO3_Grid(torch.nn.Module):
     # Compute irreps from grid representation
     def from_grid(self, grid, lmax, mmax):
         self._initialize(grid.device)
-        from_grid_mat = self.from_grid_mat[
-            :, :, self.mapping.coefficient_idx(lmax, mmax)
-        ]
+        from_grid_mat = self.from_grid_mat[:, :, self.mapping.coefficient_idx(lmax, mmax)]
         embedding = torch.einsum("bai,zbac->zic", from_grid_mat, grid)
         return embedding
