@@ -1,91 +1,77 @@
+"""Compute GFN1-xTB orbital charges with dxtb (step 2 of the data pipeline).
+
+For every structure ``<id>.pt`` produced by ``orbq.datagen.extract`` this runs a
+GFN1-xTB single point and stores ``<id>_dxtb_result.pt`` with:
+
+- ``dxtb_charges_orbital``: per-shell blocks of Q = N0 - P S, flattened in
+  eSCN (s, p, d per atom) orbital order. The diagonal of each block holds the
+  orbital charges; see Eq. (3) / Appendix B of the paper.
+- ``dxtb_charges_atomic``: orbital charges summed per atom.
+- ``dxtb_potential``, ``dxtb_emo``, ``dxtb_energy``, ``dxtb_n_scf_iter``,
+  ``dxtb_calc_time``.
+
+Run it once for each SCF convergence target (``--scp-mode charge|potential|fock``)
+into separate output directories; ``orbq.datagen.prepare`` keeps only the
+structures whose orbital charges agree across all three modes.
+
+Usage::
+
+    python -m orbq.datagen.dxtb_charges --input-dir extracted/ \
+        --output-dir gfn1_charge/ --scp-mode charge --num-workers 32
+"""
+
+import os
+
+# one thread per worker process: parallelism comes from multiprocessing
+for _var in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(_var, "1")
+
+import argparse
+import multiprocessing
 import time
+from pathlib import Path
+
+import dxtb
 import numpy as np
 import torch
-import dxtb
-from ase.io import read
-from tad_mctc.units import AA2AU
 from tad_mctc.data.getters import get_zvalence
+from tad_mctc.units import AA2AU
+from tqdm import tqdm
 
+# dxtb SCF convergence targets (dxtb.labels.SCP_MODE_*)
+SCP_MODES = {"fock": 0, "charge": 1, "potential": 2}
 
-def load_xyz(filename: str) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Load a structure from an XYZ file.
-    """
-    # Load the structure from an XYZ file
-    atoms = read(filename, format="xyz")
+# Reordering of the (2l+1) components of each shell from dxtb's native real
+# spherical-harmonic order into the order used by the training data of the paper.
+# For p this is e3nn's (x, y, z) order; for d it is the standard z-polar real d
+# set (xy, yz, 3z^2-r^2, xz, x^2-y^2).
+M_ORDER = {0: [0], 1: [2, 0, 1], 2: [4, 2, 0, 1, 3]}
 
-    # Extract atomic numbers and positions
-    numbers = torch.tensor([atom.number for atom in atoms], dtype=torch.int64)
-    positions = torch.tensor(atoms.get_positions(), dtype=torch.double)
+# e3nn uses y as the polar axis, so its l=2 basis (xz, xy, 3y^2-r^2, yz, z^2-x^2)
+# is not a permutation of the z-polar d set above: two components are rotated
+# into each other. This orthogonal matrix maps z-polar d functions to e3nn's l=2
+# basis, so that d blocks transform exactly as D(R) Q D(R)^T.
+_S3 = 3**0.5 / 2
+D_TO_E3NN = torch.tensor(
+    [
+        [0.0, 0.0, 0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, -0.5, 0.0, -_S3],
+        [0.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, _S3, 0.0, -0.5],
+    ],
+    dtype=torch.double,
+)
 
-    return numbers, positions
-
-
-def work_lmdb(file_path: str, file_name: str):
-    """
-    Open and return an LMDB dataset.
-    
-    Args:
-        file_path: Path to the directory containing the LMDB file
-        file_name: Name of the LMDB file
-    
-    Returns:
-        LmdbDataset: Dataset object for accessing LMDB data
-    """
-    import lmdb
-    from ocpmodels.datasets import LmdbDataset
-    
-    # Create full path to the LMDB file
-    full_path = file_path + file_name
-    
-    # Open LMDB environment
-    lmdb_env = lmdb.open(file_path)
-    lmdb_txn = lmdb_env.begin()
-    lmdb_cursor = lmdb_txn.cursor()
-    
-    # Configure LMDB with appropriate settings
-    db = lmdb.open(
-        full_path,
-        map_size=1099511627776 * 2,  # 2TB map size
-        subdir=False,
-        meminit=False,
-        map_async=True,
-    )
-  
-    # Create and return the dataset
-    dataset = LmdbDataset({"src": full_path})
-    return dataset
-
-
-def process_predictions_file(file_path):
-    """
-    Process a predictions NPZ file to extract atomic numbers, positions, and orbital properties.
-    """
-    data = np.load(file_path)
-    orbital_map = np.load("dxtb_experiments/dxtb_orbital_map.npz")
-    
-    all_numbers = []
-    all_positions = []
-    all_orbital_prop = []
-    n_atom = data["n_atom"]
-    flat_numbers = data["atom_types"]
-    flat_positions = data["coords"]
-    flat_orbital_prop = data["predictions"]
-    start_atom_idx = 0
-    start_orbital_idx = 0
-    for i in range(len(n_atom)):
-        n = n_atom[i]
-        all_numbers.append(flat_numbers[start_atom_idx:start_atom_idx + n])
-        all_positions.append(flat_positions[start_atom_idx:start_atom_idx + n])
-        n_orbitals = 0
-        for atom in flat_numbers[start_atom_idx:start_atom_idx + n]:
-            n_orbitals += orbital_map[str(atom)]
- 
-        all_orbital_prop.append(flat_orbital_prop[start_orbital_idx:start_orbital_idx + n_orbitals])
-        start_atom_idx += n
-        start_orbital_idx += n_orbitals
-    
-    return all_numbers, all_positions, all_orbital_prop
+# "paper": labels as used in the paper (s, p e3nn-equivariant; d in the z-polar basis)
+# "e3nn":  additionally rotate d blocks into e3nn's basis (exactly equivariant)
+D_BASES = ("paper", "e3nn")
 
 
 def calculate_dxtb(args: tuple):
@@ -93,13 +79,17 @@ def calculate_dxtb(args: tuple):
     Calculate dxTB single point energy and save results.
     
     Args:
-        args: Tuple containing (pt_path, molecule_id, save_dir, scp_mode)
+        args: Tuple containing (pt_path, molecule_id, save_dir, scp_mode[, d_basis]),
+            where d_basis is one of D_BASES (default "paper").
     
     Returns:
         float: Final calculated energy
     """
     
-    pt_path, molecule_id, save_dir, scp_mode = args
+    pt_path, molecule_id, save_dir, scp_mode = args[:4]
+    d_basis = args[4] if len(args) > 4 else "paper"
+    if d_basis not in D_BASES:
+        raise ValueError(f"d_basis must be one of {D_BASES}, got {d_basis!r}")
     
     # Load pt file
     try:
@@ -181,17 +171,39 @@ def calculate_dxtb(args: tuple):
     ).long()
     
     Q_sorted = Q_true[sort_perm][:, sort_perm]
+
+    # Reorder the m components of every shell (see M_ORDER) and optionally rotate
+    # d shells into e3nn's basis (see D_TO_E3NN). Shells are contiguous after the
+    # (atom, l, orbital index) sort above.
+    shell_l = calc.ihelp.angular[calc.ihelp.orbitals_to_shell][sort_perm]
+    m_perm = torch.arange(n_diagonals)
+    basis_change = torch.eye(n_diagonals, dtype=Q_sorted.dtype)
+    pos = 0
+    while pos < n_diagonals:
+        l = int(shell_l[pos])
+        width = 2 * l + 1
+        m_perm[pos : pos + width] = pos + torch.tensor(M_ORDER[l])
+        if l == 2 and d_basis == "e3nn":
+            basis_change[pos : pos + width, pos : pos + width] = D_TO_E3NN.to(Q_sorted.dtype)
+        pos += width
+    Q_sorted = Q_sorted[m_perm][:, m_perm]
+    Q_sorted = basis_change @ Q_sorted @ basis_change.T
+
     blocks = []
     offset = 0
-    sorted_shell = calc.ihelp.orbitals_to_shell[sort_perm]
+    # One block per (atom, angular momentum l): if an element has several shells
+    # with the same l (e.g. 1s and 2s of H in GFN1), they share one block of size
+    # (n_shells_l * (2l + 1))^2. This is the layout MultitaskLightningModule expects
+    # (see dataset_orb_index / dataset_to_model_mask in construct_orbitals).
+    sorted_lm = calc.ihelp.angular[calc.ihelp.orbitals_to_shell][sort_perm]
     sorted_atom = calc.ihelp.shells_to_atom[calc.ihelp.orbitals_to_shell][sort_perm]
-    
+
     for atom_idx in range(len(numbers)):
-        atom_mask = (sorted_atom == atom_idx)
-        shells_for_atom = sorted_shell[atom_mask]
-        
-        if shells_for_atom.numel() > 0:
-            unique_shells, counts = torch.unique_consecutive(shells_for_atom, return_counts=True)
+        atom_mask = sorted_atom == atom_idx
+        lms_for_atom = sorted_lm[atom_mask]
+
+        if lms_for_atom.numel() > 0:
+            _, counts = torch.unique_consecutive(lms_for_atom, return_counts=True)
             for size in counts:
                 block = Q_sorted[offset:offset+size, offset:offset+size]
                 blocks.append(block.flatten())
@@ -207,12 +219,12 @@ def calculate_dxtb(args: tuple):
     data["dxtb_energy"] = final_energy
     data["dxtb_n_scf_iter"] = n_scf_iter
     data["dxtb_calc_time"] = calc_time_tensor
+    data["dxtb_d_basis"] = d_basis
     
     # Save all results to a pytorch file
     torch.save(data, f"{save_dir}/{molecule_id}_dxtb_result.pt")
     
     return final_energy.sum().item()
-
 
 
 def dxtb_to_escn_orbitals(
@@ -326,105 +338,83 @@ def dxtb_to_escn_orbitals(
     return sorted_property_tensor
 
 
-def escn_to_dxtb_orbitals(
-    sorted_property_tensor: torch.Tensor,
-    angular_momentum_per_shell: torch.Tensor,
-    map_shell_to_atom_idx: torch.Tensor,
-    map_orbital_to_shell_idx: torch.Tensor
-) -> torch.Tensor:
-    """
-    Reverts a sorted property tensor back to its original order before sorting
-    by the `sort_orbital_properties_by_atom_and_lm_efficient` function.
+def _worker_init():
+    torch.set_num_threads(1)
 
-    This function is the inverse of `sort_orbital_properties_by_atom_and_lm_efficient`.
-    It uses the same mapping tensors to re-calculate the sorting permutation
-    that was originally applied, and then inverts this permutation to restore
-    the original order of properties.
 
-    Args:
-        sorted_property_tensor (torch.Tensor): A 1D tensor of properties that
-            has already been sorted by the
-            `sort_orbital_properties_by_atom_and_lm_efficient` function.
-            Its length is N_orbitals.
-        angular_momentum_per_shell (torch.Tensor): A 1D tensor where each
-            element is the angular momentum (0=s, 1=p, 2=d) of the
-            corresponding SHELL. Its length is N_shells. (Same as used in sorting)
-        map_shell_to_atom_idx (torch.Tensor): A 1D tensor mapping a shell index
-            to an atom index. Its length must be N_shells. (Same as used in sorting)
-        map_orbital_to_shell_idx (torch.Tensor): A 1D tensor mapping an orbital
-            index to a shell index. Its values should be valid indices for
-            'angular_momentum_per_shell' and 'map_shell_to_atom_idx'.
-            Its length must be N_orbitals. (Same as used in sorting)
-
-    Returns:
-        torch.Tensor: A new tensor with the properties in their original,
-                      unsorted order.
-    """
-
-    # --- Input Validation ---
-    if not all(isinstance(t, torch.Tensor) for t in [sorted_property_tensor, angular_momentum_per_shell, map_shell_to_atom_idx, map_orbital_to_shell_idx]):
-        raise TypeError("All inputs must be PyTorch tensors.")
-
-    if not (sorted_property_tensor.dim() == 1 and \
-            angular_momentum_per_shell.dim() == 1 and \
-            map_shell_to_atom_idx.dim() == 1 and \
-            map_orbital_to_shell_idx.dim() == 1):
-        raise ValueError("All input tensors must be 1-dimensional.")
-
-    num_orbitals = sorted_property_tensor.shape[0]
-    num_shells = angular_momentum_per_shell.shape[0]
-
-    if num_orbitals == 0:
-        return torch.tensor([], dtype=sorted_property_tensor.dtype, device=sorted_property_tensor.device)
-
-    if num_shells == 0: # Must have shells if there are orbitals
-        raise ValueError("angular_momentum_per_shell cannot be empty if sorted_property_tensor is not empty.")
-
-    if map_orbital_to_shell_idx.shape[0] != num_orbitals:
-        raise ValueError(f"map_orbital_to_shell_idx (len {map_orbital_to_shell_idx.shape[0]}) "
-                         f"must have the same length as sorted_property_tensor (len {num_orbitals}).")
-
-    if map_shell_to_atom_idx.shape[0] != num_shells:
-        raise ValueError(f"map_shell_to_atom_idx (len {map_shell_to_atom_idx.shape[0]}) "
-                         f"must have the same length as angular_momentum_per_shell (len {num_shells}).")
-
-    if map_orbital_to_shell_idx.numel() > 0:
-        max_shell_idx_mapped = map_orbital_to_shell_idx.max().item()
-        min_shell_idx_mapped = map_orbital_to_shell_idx.min().item()
-        if max_shell_idx_mapped >= num_shells:
-            raise ValueError(f"Max value in map_orbital_to_shell_idx ({max_shell_idx_mapped}) "
-                             f"is out of bounds for shells (0 to {num_shells-1}). Shells are indexed by angular_momentum_per_shell.")
-        if min_shell_idx_mapped < 0:
-            raise ValueError(f"Min value in map_orbital_to_shell_idx ({min_shell_idx_mapped}) cannot be negative.")
-    elif num_orbitals > 0:
-        raise ValueError("map_orbital_to_shell_idx is empty but there are orbitals.")
-
-    # --- Determine target device for operations ---
-    device = sorted_property_tensor.device
-
-    # --- Re-calculate the sorting permutation (exactly as in the forward function) ---
-    original_indices = torch.arange(num_orbitals, device=device)
-
-    _map_orbital_to_shell_idx = map_orbital_to_shell_idx.to(device, non_blocking=True)
-    _angular_momentum_per_shell = angular_momentum_per_shell.to(device, non_blocking=True)
-    _map_shell_to_atom_idx = map_shell_to_atom_idx.to(device, non_blocking=True)
-    
-    atom_idx_for_orbitals = _map_shell_to_atom_idx[_map_orbital_to_shell_idx]
-    lm_for_orbitals = _angular_momentum_per_shell[_map_orbital_to_shell_idx]
-    
-    # sorting_permutation[new_idx] = old_idx
-    # This is the permutation that, when applied to the original unsorted tensor, yields the sorted tensor.
-    sorting_permutation = np.lexsort(
-        keys=(original_indices, lm_for_orbitals, atom_idx_for_orbitals)
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Compute GFN1-xTB orbital/atomic charges with dxtb for extracted structures."
     )
-    
-    # --- Apply inverse permutation to restore original order ---
-    # If P_sorted = P_original[sorting_permutation],
-    # then P_original[sorting_permutation[i]] = P_sorted[i] for all i.
-    # This operation effectively "scatters" the values from P_sorted back to their
-    # original positions in P_original.
-    
-    unsorted_property_tensor = torch.empty_like(sorted_property_tensor, device=device) # Ensure correct device
-    unsorted_property_tensor[sorting_permutation] = sorted_property_tensor.to(device, non_blocking=True) # Ensure sorted_property_tensor is on the target device
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        required=True,
+        help="Directory with <id>.pt structures (output of orbq.datagen.extract).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Directory for <id>_dxtb_result.pt files.",
+    )
+    parser.add_argument(
+        "--scp-mode",
+        choices=sorted(SCP_MODES),
+        default="charge",
+        help="SCF convergence target used by dxtb (default: charge).",
+    )
+    parser.add_argument(
+        "--d-basis",
+        choices=D_BASES,
+        default="paper",
+        help=(
+            "Basis of d-orbital blocks. 'paper' reproduces the labels used in the paper; "
+            "'e3nn' rotates d blocks into e3nn's real spherical-harmonic basis so that "
+            "they are exactly rotation-equivariant (see README)."
+        ),
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=os.cpu_count(),
+        help="Number of worker processes (one structure per process).",
+    )
+    args = parser.parse_args(argv)
 
-    return unsorted_property_tensor
+    try:
+        multiprocessing.set_start_method("spawn")  # safe with PyTorch
+    except RuntimeError:
+        pass
+
+    if not args.input_dir.is_dir():
+        parser.error(f"input directory {args.input_dir} does not exist")
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    scp_mode = SCP_MODES[args.scp_mode]
+
+    # skip structures that were already computed (allows restarting)
+    args_list = [
+        (str(path), path.stem, str(args.output_dir), scp_mode, args.d_basis)
+        for path in sorted(args.input_dir.glob("*.pt"))
+        if not (args.output_dir / f"{path.stem}_dxtb_result.pt").exists()
+    ]
+    if not args_list:
+        print("No files left to process.")
+        return
+
+    n_processes = max(1, min(args.num_workers, len(args_list)))
+    print(
+        f"Running {len(args_list)} dxtb calculations ({args.scp_mode} mode) "
+        f"on {n_processes} processes..."
+    )
+    chunksize = min(100, max(1, len(args_list) // (n_processes * 4)))
+    with multiprocessing.Pool(n_processes, initializer=_worker_init) as pool:
+        for _ in tqdm(
+            pool.imap_unordered(calculate_dxtb, args_list, chunksize=chunksize),
+            total=len(args_list),
+        ):
+            pass
+
+
+if __name__ == "__main__":
+    main()

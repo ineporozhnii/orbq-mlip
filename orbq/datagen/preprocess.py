@@ -1,5 +1,18 @@
+"""Convert packed structures into a graph LMDB dataset (step 4 of the data pipeline).
+
+Reads every ``*.tar`` archive in ``--data_path`` (output of ``orbq.datagen.prepare``),
+builds radius graphs (``--atom_cutoff``, default 5 A) and writes one
+``data.XXXX.lmdb`` per archive. Records are indexed in tar member order.
+
+Usage::
+
+    python -m orbq.datagen.preprocess --tar --data_path prepared/tar --out_path lmdb/
+"""
+
 from pathlib import Path
-import lz4, gzip, zlib
+import gzip
+import zlib
+import lz4
 import lz4.frame
 import lzma
 import os
@@ -124,7 +137,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--data_path",
-        help="path to charge density tar files",
+        help="directory with the .tar archives produced by orbq.datagen.prepare",
     )
     parser.add_argument(
         "--out_path",
@@ -164,7 +177,8 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--disable_pbc",
         action="store_true",
-        help="Disable periodic boundary conditions",
+        default=True,
+        help="Disable periodic boundary conditions (default; molecules are non-periodic)",
     )
     parser.add_argument(
         "--tar",
@@ -174,10 +188,14 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
-if __name__ == "__main__":
+def main(argv=None):
     parser: argparse.ArgumentParser = get_parser()
-    args: argparse.Namespace = parser.parse_args()
+    args: argparse.Namespace = parser.parse_args(argv)
     if args.tar:
         main_tar(args)
     else:
-        raise NotImplementedError
+        raise NotImplementedError("Only --tar input is supported.")
+
+
+if __name__ == "__main__":
+    main()

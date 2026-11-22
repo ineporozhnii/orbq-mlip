@@ -1,7 +1,30 @@
+"""Filter, split and reference-correct dxtb results (step 3 of the data pipeline).
+
+1. **Filter**: keep structures whose GFN1-xTB orbital charges agree across the
+   three dxtb SCF modes (charge / potential / Fock) and drop 5-sigma outliers of
+   the per-structure min/max orbital charge.
+2. **Split**: fixed validation and test sets plus nested training sets of the
+   requested sizes (shuffled with a fixed seed).
+3. **Energy reference**: fit a per-element linear model (bag of atoms) on the
+   largest training split and store ``total_energy_corrected`` = E_DFT - E_lin.
+4. **Pack**: write the corrected structures into one tar archive in sorted
+   filename order, ready for ``orbq.datagen.preprocess``.
+
+Split indices are written relative to that sorted order, i.e. they index the
+LMDB dataset produced by ``preprocess`` directly.
+
+Usage::
+
+    python -m orbq.datagen.prepare --charge-dir gfn1_charge/ \
+        --potential-dir gfn1_potential/ --fock-dir gfn1_fock/ --out-dir prepared/
+"""
+
+import argparse
 import os
 import sys
 import json
 import shutil
+import tarfile
 import warnings
 import multiprocessing
 from pathlib import Path
@@ -11,7 +34,13 @@ import torch
 import numpy as np
 from tqdm import tqdm
 from sklearn.linear_model import LinearRegression
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+# number of worker processes; set from the command line in main()
+N_PROCESSES = os.cpu_count()
 
 
 def _worker_compare(args):
@@ -93,7 +122,7 @@ def compare_and_filter_structures(
         (fname, dir_charge, dir_potential, dir_fock, clean_dir, rtol, atol)
         for fname in common_files
     ]
-    n_processes = min(190, multiprocessing.cpu_count())
+    n_processes = N_PROCESSES
     chunksize = min(1000, max(1, len(args_list) // (n_processes * 2)))
 
     with multiprocessing.Pool(n_processes) as pool:
@@ -437,7 +466,7 @@ def save_corrected_energies(
         (fname, clean_dir, refcorr_dir, lin_reg, sorted_atomic_numbers, atom_to_index)
         for fname in all_splits_files
     ]
-    n_processes = min(190, multiprocessing.cpu_count())
+    n_processes = N_PROCESSES
     chunksize = min(1000, max(1, len(args_list) // (n_processes * 2)))
 
     # Recalculate properties for all splits in parallel
@@ -465,54 +494,98 @@ def save_corrected_energies(
     print(f"Saved corrected energies histogram to {hist_plot_path}")
 
 
-def main():
-    # --- 1. Variables defining splits and paths ---
-    base_dir = Path("/scratch/igornep/MLGuessQC/data")
+def remap_splits_to_dataset_order(splits_dir: Path, files: list, dataset_dir: Path):
+    """Rewrite split JSONs so that indices refer to sorted files in ``dataset_dir``.
 
-    # Change these paths to your exact directories!
-    dir_charge = base_dir / "OMol25_metal_neutral_gfn1_charge"
-    dir_potential = base_dir / "OMol25_metal_neutral_gfn1_potential"
-    dir_fock = base_dir / "OMol25_metal_neutral_gfn1_fock"
+    ``create_dataset_splits`` indexes the sorted list of *clean* files, but only
+    files that belong to some split are reference-corrected and packed. This maps
+    every index to the position of the same file in the sorted packed dataset
+    (the identity when all clean files are used) and drops structures whose
+    correction failed.
+    """
+    dataset_files = sorted(f.name for f in dataset_dir.glob("*.pt"))
+    position = {name: i for i, name in enumerate(dataset_files)}
+    for split_json in sorted(splits_dir.glob("datasplits*.json")):
+        with open(split_json) as f:
+            splits = json.load(f)
+        remapped = {
+            key: [position[files[i]] for i in idx if files[i] in position]
+            for key, idx in splits.items()
+        }
+        dropped = sum(len(splits[k]) - len(remapped[k]) for k in splits)
+        with open(split_json, "w") as f:
+            json.dump(remapped, f, indent=4)
+        print(f"{split_json.name}: indices remapped to dataset order ({dropped} dropped)")
 
-    # Output directories
-    clean_dir = base_dir / "OMol25_metal_neutral_clean"
-    refcorr_dir = base_dir / "OMol25_metal_neutral_clean_refcorr"
 
-    # Logs and split files
-    splits_dir = base_dir / "datasplits"
-    coef_json = base_dir / "energy_coefficients.json"
-    scatter_plot_path = base_dir / "energy_predictions_scatter.png"
-    hist_plot_path = base_dir / "corrected_energies_histogram.png"
+def pack_dataset(dataset_dir: Path, tar_path: Path):
+    """Write all ``*.pt`` files of ``dataset_dir`` into ``tar_path`` in sorted order.
 
-    # Adjust variables here for number of structures to include in each split step
-    TRAIN_SIZES = [1000, 3000, 10000, 30000, 100000, 617554]
-    N_VAL = 10000
-    N_TEST = 50000
+    ``orbq.datagen.preprocess`` assigns LMDB indices in tar member order, so the
+    archive must follow the same sorted order as the split indices.
+    """
+    tar_path.parent.mkdir(parents=True, exist_ok=True)
+    files = sorted(dataset_dir.glob("*.pt"))
+    with tarfile.open(tar_path, "w") as tar:
+        for f in tqdm(files, desc=f"Packing {tar_path.name}"):
+            tar.add(f, arcname=f.name)
+    print(f"Packed {len(files)} structures into {tar_path}")
 
-    # --- 2. Compare and Filter Data ---
-    # if not clean_dir.exists() or len(list(clean_dir.glob("*.pt"))) == 0:
-    #     print("Starting compare and filter step...")
-    #     compare_and_filter_structures(dir_charge, dir_potential, dir_fock, clean_dir)
-    # else:
-    #     print(f"Clean directory '{clean_dir}' is already populated. Using existing files.")
 
-    # --- 3. Create Dataset Splits ---
+def main(argv=None):
+    global N_PROCESSES
+    parser = argparse.ArgumentParser(
+        description="Filter dxtb results, create splits, fit the energy reference and pack the dataset."
+    )
+    parser.add_argument("--charge-dir", type=Path, required=True, help="dxtb results computed with --scp-mode charge.")
+    parser.add_argument("--potential-dir", type=Path, required=True, help="dxtb results computed with --scp-mode potential.")
+    parser.add_argument("--fock-dir", type=Path, required=True, help="dxtb results computed with --scp-mode fock.")
+    parser.add_argument("--out-dir", type=Path, required=True, help="Output directory.")
+    parser.add_argument(
+        "--train-sizes",
+        type=int,
+        nargs="+",
+        default=[3000, 10000, 30000, 100000],
+        help=(
+            "Nested training set sizes. The linear energy reference is fitted on the largest one. "
+            "The paper used 1000 3000 10000 30000 100000 617554 (617,554 = all remaining clean structures)."
+        ),
+    )
+    parser.add_argument("--n-val", type=int, default=10000, help="Validation set size (default: 10000).")
+    parser.add_argument("--n-test", type=int, default=50000, help="Test set size (default: 50000).")
+    parser.add_argument("--seed", type=int, default=42, help="Shuffle seed for the splits (default: 42).")
+    parser.add_argument("--num-workers", type=int, default=os.cpu_count(), help="Number of worker processes.")
+    args = parser.parse_args(argv)
+    N_PROCESSES = args.num_workers
+
+    out = args.out_dir
+    clean_dir = out / "clean"
+    refcorr_dir = out / "refcorr"
+    splits_dir = out / "splits"
+    out.mkdir(parents=True, exist_ok=True)
+
+    # 1. filter structures whose orbital charges disagree between SCF modes
+    if clean_dir.exists() and any(clean_dir.glob("*.pt")):
+        print(f"Clean directory '{clean_dir}' is already populated. Using existing files.")
+    else:
+        print("Comparing dxtb SCF modes and filtering outliers...")
+        compare_and_filter_structures(args.charge_dir, args.potential_dir, args.fock_dir, clean_dir)
+
+    # 2. splits (indices into the sorted clean files)
     print("Splitting dataset...")
     try:
         splits, all_files = create_dataset_splits(
-            clean_dir, splits_dir, TRAIN_SIZES, N_VAL, N_TEST
+            clean_dir, splits_dir, args.train_sizes, args.n_val, args.n_test, seed=args.seed
         )
     except ValueError as e:
         print(f"Error during splitting: {e}")
         sys.exit(1)
 
-    # --- 4. Train LR to Energy baseline ---
-    print("Training Baseline Energy model...")
+    # 3. per-element linear energy reference, fitted on the largest training split
+    print("Fitting linear energy reference...")
     lin_reg, sorted_atomic_numbers, atom_to_index = train_linear_energy_model(
         clean_dir, splits, all_files
     )
-
-    print("Evaluating model on validation and test sets...")
     plot_predictions_vs_true(
         clean_dir,
         splits,
@@ -520,11 +593,8 @@ def main():
         lin_reg,
         sorted_atomic_numbers,
         atom_to_index,
-        scatter_plot_path,
+        out / "energy_predictions_scatter.png",
     )
-
-    # --- 5. Correct file energies and Save ---
-    print("Correcting geometries' energies...")
     save_corrected_energies(
         clean_dir,
         refcorr_dir,
@@ -533,8 +603,16 @@ def main():
         lin_reg,
         sorted_atomic_numbers,
         atom_to_index,
-        coef_json,
-        hist_plot_path,
+        out / "energy_coefficients.json",
+        out / "corrected_energies_histogram.png",
+    )
+
+    # 4. make split indices match the packed (sorted) dataset and pack it
+    remap_splits_to_dataset_order(splits_dir, all_files, refcorr_dir)
+    pack_dataset(refcorr_dir, out / "tar" / "dataset.tar")
+    print(
+        "Done. Next: python -m orbq.datagen.preprocess --tar "
+        f"--data_path {out / 'tar'} --out_path <lmdb_dir>"
     )
 
 

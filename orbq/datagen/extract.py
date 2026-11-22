@@ -1,3 +1,19 @@
+"""Extract structures from OMol25 (step 1 of the data pipeline).
+
+Selects structures by ``data_id`` / charge / spin from an OMol25 ASE-DB split
+(read with fairchem's ``AseDBDataset``) and writes one ``<data_id>_<index>.pt``
+file per structure with coordinates, atomic numbers, DFT total energy, forces,
+Mulliken and Loewdin charges.
+
+The paper uses neutral (charge 0), singlet (spin 1) ``metal_complexes`` from the
+OMol25 4M training split.
+
+Usage::
+
+    python -m orbq.datagen.extract --omol-path OMol25/train_4M --out-dir extracted/
+"""
+
+import argparse
 import os
 import torch
 import multiprocessing as mp
@@ -67,6 +83,7 @@ def process_and_save_dataset(
     target_data_id: str = "metal_complexes",
     target_charge: int = 0,
     target_spin: int = 1,
+    num_workers: int = 64,
 ):
     os.makedirs(save_path, exist_ok=True)
 
@@ -74,7 +91,7 @@ def process_and_save_dataset(
     dataset = AseDBDataset({"src": data_path})
     total_structures = len(dataset)
 
-    num_cores = min(64, mp.cpu_count())
+    num_cores = min(num_workers, mp.cpu_count())
     n_saved = 0
 
     # Create an iterator for the arguments
@@ -102,17 +119,28 @@ def process_and_save_dataset(
                 break
 
 
-if __name__ == "__main__":
-    mp.set_start_method("spawn", force=True)  # Ensuring safe initialization
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Extract OMol25 structures into per-structure .pt files.")
+    parser.add_argument("--omol-path", required=True, help="Path to an OMol25 ASE-DB split (e.g. the 4M train split).")
+    parser.add_argument("--out-dir", required=True, help="Output directory for <data_id>_<index>.pt files.")
+    parser.add_argument("--data-id", default="metal_complexes", help="OMol25 data_id to keep (default: metal_complexes).")
+    parser.add_argument("--charge", type=int, default=0, help="Total charge to keep (default: 0).")
+    parser.add_argument("--spin", type=int, default=1, help="Spin multiplicity to keep (default: 1).")
+    parser.add_argument("--n-max", type=int, default=None, help="Stop after this many structures (default: all).")
+    parser.add_argument("--num-workers", type=int, default=64, help="Number of worker processes.")
+    args = parser.parse_args(argv)
 
-    # Train set: 450k neutral metal complexes
-    DATA_PATH = "../../data/OMol25/train"
-    SAVE_PATH = "../../data/OMol25_metal_neutral"
-    N_MAX = 200_000
-
+    mp.set_start_method("spawn", force=True)
     process_and_save_dataset(
-        data_path=DATA_PATH,
-        save_path=SAVE_PATH,
-        n_max=N_MAX,
-        target_data_id="metal_complexes",
+        data_path=args.omol_path,
+        save_path=args.out_dir,
+        n_max=args.n_max if args.n_max is not None else float("inf"),
+        target_data_id=args.data_id,
+        target_charge=args.charge,
+        target_spin=args.spin,
+        num_workers=args.num_workers,
     )
+
+
+if __name__ == "__main__":
+    main()
