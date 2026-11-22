@@ -1,19 +1,20 @@
-import logging
-import time
-import json
-import torch
 import argparse
 import contextlib
-import numpy as np
+import json
+import logging
+import time
 from pathlib import Path
-from tqdm.auto import tqdm
-from lightning.pytorch import seed_everything
 
+import numpy as np
+import torch
+from lightning.pytorch import seed_everything
 from torch.utils.data import Subset
+from tqdm.auto import tqdm
+
 from orbq.common.compat import legacy_pickle_module, upgrade_legacy_targets
 from orbq.common.pyg import DataLoader
-from orbq.data.dataset import LmdbDataset
 from orbq.data.datamodule import worker_init_fn
+from orbq.data.dataset import LmdbDataset
 from orbq.model.module import MultitaskLightningModule
 
 pylogger = logging.getLogger(__name__)
@@ -117,11 +118,10 @@ def main(
         torch.no_grad(),
         contextlib.ExitStack() as context_stack,
     ):
-
         prog = context_stack.enter_context(
             tqdm(total=min(max_n_graphs, len(test_dataset)), disable=None)
         )
-        display_bar = context_stack.enter_context(
+        context_stack.enter_context(
             tqdm(
                 bar_format=(
                     ""
@@ -147,28 +147,36 @@ def main(
         atomic_embeddings = []
         for batch in test_loader:
             batch = batch.to(device)
-            
-            loss, pred_energy, target_energy, pred_charges, target_charges, pred_forces, target_forces = model(batch)
+
+            (
+                loss,
+                pred_energy,
+                target_energy,
+                pred_charges,
+                target_charges,
+                pred_forces,
+                target_forces,
+            ) = model(batch)
 
             n_atom.extend(batch["n_atom"].detach().cpu())
             atom_types.extend(batch["atom_types"].detach().cpu())
             coords.extend(batch["coords"].detach().cpu())
-            
+
             if pred_energy is not None:
                 predictions_energy.extend(pred_energy.detach().cpu())
             if target_energy is not None:
                 ground_truth_energy.extend(target_energy.detach().cpu())
-                
+
             if pred_charges is not None:
                 predictions_charges.extend(pred_charges.detach().cpu())
             if target_charges is not None:
                 ground_truth_charges.extend(target_charges.detach().cpu())
-                
+
             if pred_forces is not None:
                 predictions_forces.extend(pred_forces.detach().cpu().flatten())
             if target_forces is not None:
                 ground_truth_forces.extend(target_forces.detach().cpu().flatten())
-                
+
             if save_emb:
                 out = model.model(batch)
                 if len(out) == 5:
@@ -176,7 +184,7 @@ def main(
                 else:
                     _, _, _, atomic_emb = out
                 atomic_embeddings.extend(atomic_emb.detach().cpu())
-                
+
             metadata_list.extend(batch.metadata)
             prog.update(batch["n_atom"].shape[0])
         elapsed_time = time.time() - curr_time
@@ -211,9 +219,7 @@ def main(
             save_dict["ground_truth_forces"] = torch.tensor(ground_truth_forces)
         if save_emb:
             save_dict["atomic_emb"] = (
-                torch.stack(atomic_embeddings)
-                if atomic_embeddings
-                else torch.tensor([])
+                torch.stack(atomic_embeddings) if atomic_embeddings else torch.tensor([])
             )
 
         torch.save(save_dict, save_path)

@@ -1,7 +1,9 @@
-import torch
 import numpy as np
+import torch
+
 from orbq.common.pyg import Data
-from orbq.data.utils import read_pt, make_graph
+from orbq.data.utils import make_graph, read_pt
+
 
 class AtomicNumberTable:
     def __init__(self, zs):
@@ -18,13 +20,13 @@ class AtomicNumberTable:
 
     def z_to_index(self, atomic_number: str) -> int:
         return self.zs.index(atomic_number)
-    
-def atomic_numbers_to_indices(
-    atomic_numbers: np.ndarray, z_table: AtomicNumberTable
-) -> np.ndarray:
+
+
+def atomic_numbers_to_indices(atomic_numbers: np.ndarray, z_table: AtomicNumberTable) -> np.ndarray:
     "adpated from: https://github.com/ACEsuit/mace/blob/main/mace"
     to_index_fn = np.vectorize(z_table.z_to_index)
     return to_index_fn(atomic_numbers)
+
 
 def to_one_hot(indices: torch.Tensor, num_classes: int) -> torch.Tensor:
     """
@@ -43,6 +45,7 @@ def to_one_hot(indices: torch.Tensor, num_classes: int) -> torch.Tensor:
 
     return oh.view(*shape)
 
+
 class AtomicData(Data):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -55,8 +58,8 @@ class AtomicData(Data):
         cell,
         energy,
         orbital_charges_dxtb,
-        atomic_charges_mulliken, 
-        atomic_charges_lowdin, 
+        atomic_charges_mulliken,
+        atomic_charges_lowdin,
         atomic_charges_dxtb,
         forces,
         metadata: str,
@@ -65,7 +68,7 @@ class AtomicData(Data):
         disable_pbc: bool = False,
         device: str = "cpu",
         max_neighbors: int = 24,
-    ) -> "AtomicData":        
+    ) -> "AtomicData":
         n_atom = len(atom_coords)
 
         idx_src, idx_dst, shifts, unit_shifts = make_graph(
@@ -75,10 +78,10 @@ class AtomicData(Data):
             atom_cutoff,
             disable_pbc,
             disable_sc=True,
-            max_neigh=max_neighbors
+            max_neigh=max_neighbors,
         )
         edge_index = torch.stack([idx_src, idx_dst], dim=0)
-        
+
         indices = atomic_numbers_to_indices(atom_types, z_table=z_table)
         one_hot = to_one_hot(
             torch.tensor(indices, dtype=torch.long).unsqueeze(-1),
@@ -101,7 +104,7 @@ class AtomicData(Data):
             atomic_charges_lowdin=atomic_charges_lowdin,
             atomic_charges_dxtb=atomic_charges_dxtb,
             forces=forces,
-            metadata=metadata
+            metadata=metadata,
         )
         return cls(**data_dict)
 
@@ -121,9 +124,9 @@ class AtomicData(Data):
         assert (fpath or (fcontent and finfo)) and not (fpath and (fcontent and finfo))
 
         data = read_pt(fcontent)
-            
+
         metadata = finfo.name.split("/")[-1].split(".")[0]
-    
+
         return cls.build_graph(
             *data,
             metadata=metadata,
@@ -131,5 +134,5 @@ class AtomicData(Data):
             atom_cutoff=atom_cutoff,
             disable_pbc=disable_pbc,
             device=device,
-            max_neighbors=max_neighbors
+            max_neighbors=max_neighbors,
         )

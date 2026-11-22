@@ -20,21 +20,20 @@ Usage::
 """
 
 import argparse
-import os
-import sys
 import json
-import shutil
-import tarfile
-import warnings
 import multiprocessing
-from pathlib import Path
+import os
+import shutil
+import sys
+import tarfile
 from collections import Counter
+from pathlib import Path
 
-import torch
-import numpy as np
-from tqdm import tqdm
-from sklearn.linear_model import LinearRegression
 import matplotlib
+import numpy as np
+import torch
+from sklearn.linear_model import LinearRegression
+from tqdm import tqdm
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -69,9 +68,9 @@ def _worker_compare(args):
         charges_f = data_f["dxtb_charges_orbital"]
 
         if charges_c.shape == charges_p.shape == charges_f.shape:
-            if torch.allclose(
-                charges_c, charges_p, rtol=rtol, atol=atol
-            ) and torch.allclose(charges_c, charges_f, rtol=rtol, atol=atol):
+            if torch.allclose(charges_c, charges_p, rtol=rtol, atol=atol) and torch.allclose(
+                charges_c, charges_f, rtol=rtol, atol=atol
+            ):
                 # Copy matching file to clean dir
                 shutil.copy2(path_f, clean_dir / fname)
                 return (
@@ -107,12 +106,8 @@ def compare_and_filter_structures(
     files_potential = set(f.name for f in dir_potential.glob("*.pt"))
     files_fock = set(f.name for f in dir_fock.glob("*.pt"))
 
-    common_files = list(
-        files_charge.intersection(files_potential).intersection(files_fock)
-    )
-    print(
-        f"Found {len(common_files)} common files. Comparing charges on multiple cores..."
-    )
+    common_files = list(files_charge.intersection(files_potential).intersection(files_fock))
+    print(f"Found {len(common_files)} common files. Comparing charges on multiple cores...")
 
     matched_files = []
     min_charges = []
@@ -181,7 +176,7 @@ def compare_and_filter_structures(
             total_removed = compute_outliers(
                 min_charges, max_charges, mu_min, std_min, mu_max, std_max, s
             )
-            label = f"{s} $\sigma$ (Total removed: {total_removed})"
+            label = rf"{s} $\sigma$ (Total removed: {total_removed})"
 
             # Min subplot lines
             ax1.axvline(mu_min - s * std_min, color=c, linestyle="--", label=label)
@@ -262,9 +257,7 @@ def create_dataset_splits(
         with open(splits_json, "w") as f:
             json.dump(splits, f, indent=4)
 
-        print(
-            f"Splits saved to {splits_json} (Train: {n_train}, Val: {n_val}, Test: {n_test})"
-        )
+        print(f"Splits saved to {splits_json} (Train: {n_train}, Val: {n_val}, Test: {n_test})")
 
         if n_train == max_train:
             largest_split = splits
@@ -313,9 +306,7 @@ def train_linear_energy_model(clean_dir: Path, splits: dict, files: list):
     lin_reg = LinearRegression()
     lin_reg.fit(X_train, y_train)
 
-    print(
-        f"Linear Regression R^2 on training data: {lin_reg.score(X_train, y_train):.4f}"
-    )
+    print(f"Linear Regression R^2 on training data: {lin_reg.score(X_train, y_train):.4f}")
     return lin_reg, sorted_atomic_numbers, atom_to_index
 
 
@@ -348,9 +339,7 @@ def plot_predictions_vs_true(
         y_true = []
         X_features = np.zeros((len(split_files), len(sorted_atomic_numbers)))
 
-        for i, fname in enumerate(
-            tqdm(split_files, desc=f"Evaluating {split_name} set")
-        ):
+        for i, fname in enumerate(tqdm(split_files, desc=f"Evaluating {split_name} set")):
             data = torch.load(clean_dir / fname, map_location="cpu", weights_only=False)
             numbers = data["atom_types"].numpy()
             y_true.append(data["total_energy"].item())
@@ -419,15 +408,13 @@ def _worker_correct(args):
         corrected_energy = float(total_energy - baseline_energy)
 
         # Append back into torch dictionary
-        data["total_energy_corrected"] = torch.tensor(
-            corrected_energy, dtype=torch.float32
-        )
+        data["total_energy_corrected"] = torch.tensor(corrected_energy, dtype=torch.float32)
 
         # Save corrected structure
         torch.save(data, refcorr_dir / fname)
 
         return corrected_energy
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -537,9 +524,21 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Filter dxtb results, create splits, fit the energy reference and pack the dataset."
     )
-    parser.add_argument("--charge-dir", type=Path, required=True, help="dxtb results computed with --scp-mode charge.")
-    parser.add_argument("--potential-dir", type=Path, required=True, help="dxtb results computed with --scp-mode potential.")
-    parser.add_argument("--fock-dir", type=Path, required=True, help="dxtb results computed with --scp-mode fock.")
+    parser.add_argument(
+        "--charge-dir",
+        type=Path,
+        required=True,
+        help="dxtb results computed with --scp-mode charge.",
+    )
+    parser.add_argument(
+        "--potential-dir",
+        type=Path,
+        required=True,
+        help="dxtb results computed with --scp-mode potential.",
+    )
+    parser.add_argument(
+        "--fock-dir", type=Path, required=True, help="dxtb results computed with --scp-mode fock."
+    )
     parser.add_argument("--out-dir", type=Path, required=True, help="Output directory.")
     parser.add_argument(
         "--train-sizes",
@@ -551,10 +550,16 @@ def main(argv=None):
             "The paper used 1000 3000 10000 30000 100000 617554 (617,554 = all remaining clean structures)."
         ),
     )
-    parser.add_argument("--n-val", type=int, default=10000, help="Validation set size (default: 10000).")
+    parser.add_argument(
+        "--n-val", type=int, default=10000, help="Validation set size (default: 10000)."
+    )
     parser.add_argument("--n-test", type=int, default=50000, help="Test set size (default: 50000).")
-    parser.add_argument("--seed", type=int, default=42, help="Shuffle seed for the splits (default: 42).")
-    parser.add_argument("--num-workers", type=int, default=os.cpu_count(), help="Number of worker processes.")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Shuffle seed for the splits (default: 42)."
+    )
+    parser.add_argument(
+        "--num-workers", type=int, default=os.cpu_count(), help="Number of worker processes."
+    )
     args = parser.parse_args(argv)
     N_PROCESSES = args.num_workers
 

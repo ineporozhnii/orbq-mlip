@@ -1,10 +1,11 @@
-from pathlib import Path
 import bisect
 import pickle
-import numpy as np
-import lmdb
+from pathlib import Path
 
+import lmdb
+import numpy as np
 from torch.utils.data import Dataset
+
 from orbq.common.compat import loads as _loads
 from orbq.common.typing import assert_is_instance as aii
 
@@ -26,7 +27,7 @@ class LmdbDataset(Dataset):
             assert len(db_paths) > 0, f"No LMDBs found in '{self.path}'"
             self._db_paths = db_paths
             self._keys = []
-            
+
             for db_path in db_paths:
                 cur_env = self.connect_db(db_path)
                 length_entry = cur_env.begin().get("length".encode("ascii"))
@@ -63,7 +64,7 @@ class LmdbDataset(Dataset):
         if not self.path.is_file():
             if self.envs is None:
                 self._init_db()
-            
+
             db_idx = bisect.bisect(self._keylen_cumulative, idx)
             el_idx = idx
             if db_idx != 0:
@@ -71,9 +72,7 @@ class LmdbDataset(Dataset):
             assert el_idx >= 0
 
             datapoint_pickled = (
-                self.envs[db_idx]
-                .begin()
-                .get(f"{self._keys[db_idx][el_idx]}".encode("ascii"))
+                self.envs[db_idx].begin().get(f"{self._keys[db_idx][el_idx]}".encode("ascii"))
             )
 
             data_object = _loads(datapoint_pickled)
@@ -81,13 +80,12 @@ class LmdbDataset(Dataset):
         else:
             if self.env is None:
                 self._init_db()
-                
-            datapoint_pickled = self.env.begin().get(
-                f"{self._keys[idx]}".encode("ascii")
-            )
+
+            datapoint_pickled = self.env.begin().get(f"{self._keys[idx]}".encode("ascii"))
             data_object = _loads(datapoint_pickled)
 
         import torch
+
         for key, value in data_object:
             if isinstance(value, torch.Tensor) and value.requires_grad:
                 setattr(data_object, key, value.detach())

@@ -1,10 +1,10 @@
+from bisect import bisect
+
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-from bisect import bisect
 from lightning.pytorch.callbacks import Callback
-import matplotlib.pyplot as plt
 
 
 def warmup_lr_milestone(current_step: int, optim_config):
@@ -17,10 +17,7 @@ def warmup_lr_milestone(current_step: int, optim_config):
 
     # keep this block for older configs that have warmup_epochs instead of warmup_steps
     # and lr_milestones are defined in epochs
-    if (
-        any(x < 100 for x in optim_config["lr_milestones"])
-        or "warmup_epochs" in optim_config
-    ):
+    if any(x < 100 for x in optim_config["lr_milestones"]) or "warmup_epochs" in optim_config:
         raise Exception(
             "ConfigError: please define lr_milestones in steps not epochs and define warmup_steps instead of warmup_epochs"
         )
@@ -48,12 +45,8 @@ def warm_lr_lambda(
 
 
 class PowerDecayScheduler(optim.lr_scheduler.LambdaLR):
-    def __init__(
-        self, optimizer, warmup_steps=1000, warmup_factor=0.2, alpha=0.96, beta=1e4
-    ):
-        scheduler_fn = lambda step: warm_lr_lambda(
-            step, warmup_steps, warmup_factor, alpha, beta
-        )
+    def __init__(self, optimizer, warmup_steps=1000, warmup_factor=0.2, alpha=0.96, beta=1e4):
+        scheduler_fn = lambda step: warm_lr_lambda(step, warmup_steps, warmup_factor, alpha, beta)
         super().__init__(optimizer=optimizer, lr_lambda=scheduler_fn)
 
 
@@ -107,12 +100,8 @@ class PredictionScatterPlotCallback(Callback):
             self.target_energy.extend(outputs["target_energy"].detach().cpu().numpy())
 
         if "pred_forces" in outputs and outputs["pred_forces"] is not None:
-            self.pred_forces.extend(
-                outputs["pred_forces"].detach().cpu().numpy().flatten()
-            )
-            self.target_forces.extend(
-                outputs["target_forces"].detach().cpu().numpy().flatten()
-            )
+            self.pred_forces.extend(outputs["pred_forces"].detach().cpu().numpy().flatten())
+            self.target_forces.extend(outputs["target_forces"].detach().cpu().numpy().flatten())
 
     def on_validation_epoch_end(self, trainer, pl_module):
         """
@@ -125,16 +114,12 @@ class PredictionScatterPlotCallback(Callback):
             # --- Plot Charges ---
             ax_c = axes[0]
             num_plot = min(len(self.target_charges), self.max_charges_plot)
-            ax_c.scatter(
-                self.target_charges[:num_plot], self.pred_charges[:num_plot], alpha=0.2
-            )
+            ax_c.scatter(self.target_charges[:num_plot], self.pred_charges[:num_plot], alpha=0.2)
 
             if len(self.target_charges) > 0:
                 min_val = min(min(self.target_charges), min(self.pred_charges))
                 max_val = max(max(self.target_charges), max(self.pred_charges))
-                ax_c.plot(
-                    [min_val, max_val], [min_val, max_val], "k--", lw=2, alpha=0.5
-                )
+                ax_c.plot([min_val, max_val], [min_val, max_val], "k--", lw=2, alpha=0.5)
 
             ax_c.set_xlabel("Target Charges")
             ax_c.set_ylabel("Predicted Charges")
@@ -271,9 +256,7 @@ class ValidationDataLogger(Callback):
                 final_data[key] = torch.cat(data_list).cpu()
 
         if trainer.global_rank == 0:
-            save_path = (
-                f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.pt"
-            )
+            save_path = f"{self.save_dir}/orbital_charges_epoch_{trainer.current_epoch}.pt"
             print(f"Saving validation data to {save_path}")
             torch.save(final_data, save_path)
 

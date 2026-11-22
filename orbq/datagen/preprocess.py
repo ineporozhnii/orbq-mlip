@@ -9,19 +9,19 @@ Usage::
     python -m orbq.datagen.preprocess --tar --data_path prepared/tar --out_path lmdb/
 """
 
-from pathlib import Path
+import argparse
 import gzip
-import zlib
-import lz4
-import lz4.frame
 import lzma
+import multiprocessing as mp
 import os
 import pickle
 import tarfile
-import argparse
-import multiprocessing as mp
+import zlib
+from pathlib import Path
 
 import lmdb
+import lz4
+import lz4.frame
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -112,9 +112,7 @@ def main_tar(args: argparse.Namespace) -> None:
     os.makedirs(os.path.join(args.out_path), exist_ok=True)
 
     # Initialize lmdb paths
-    db_paths = [
-        os.path.join(args.out_path, "data.%04d.lmdb" % i) for i in range(len(tar_files))
-    ]
+    db_paths = [os.path.join(args.out_path, "data.%04d.lmdb" % i) for i in range(len(tar_files))]
 
     z_table = get_atomic_number_table_from_zs(np.arange(100).tolist())
 

@@ -8,35 +8,31 @@ Adapted from:
 https://github.com/FAIR-Chem/fairchem/tree/main/src/fairchem/core/models/scn
 """
 
-import time
 from typing import List
 
 import torch
 import torch.nn as nn
+from e3nn import o3
+from e3nn.o3 import (
+    FullyConnectedTensorProduct,
+    Irreps,
+    Linear,
+    ReducedTensorProducts,
+)
 
 from orbq.common.utils import get_edge_vectors_and_lengths
-from orbq.model.scn.so3 import (
-    CoefficientMapping,
-    SO3_Embedding,
-    SO3_Grid,
-    SO3_Rotation,
-)
+from orbq.model.scn.sampling import CalcSpherePoints
 from orbq.model.scn.smearing import (
     GaussianSmearing,
     LinearSigmoidSmearing,
     SigmoidSmearing,
     SiLUSmearing,
 )
-
-from orbq.model.scn.sampling import CalcSpherePoints
-
-from e3nn import o3
-from e3nn.o3 import (
-    ReducedTensorProducts,
-    Irrep,
-    Irreps,
-    Linear,
-    FullyConnectedTensorProduct,
+from orbq.model.scn.so3 import (
+    CoefficientMapping,
+    SO3_Embedding,
+    SO3_Grid,
+    SO3_Rotation,
 )
 
 
@@ -112,9 +108,7 @@ class eSCN(nn.Module):
         self.act = nn.SiLU()
 
         # Weights for message initialization
-        self.sphere_embedding = nn.Embedding(
-            self.max_num_elements, self.sphere_channels_all
-        )
+        self.sphere_embedding = nn.Embedding(self.max_num_elements, self.sphere_channels_all)
 
         # Initialize the function used to measure the distances between atoms
         assert self.distance_function in [
@@ -203,9 +197,7 @@ class eSCN(nn.Module):
                 self.sphere_channels_all, self.num_sphere_samples, self.act
             )
 
-        self.energy_block = EnergyBlock(
-            self.sphere_channels_all, self.num_sphere_samples, self.act
-        )
+        self.energy_block = EnergyBlock(self.sphere_channels_all, self.num_sphere_samples, self.act)
         if getattr(self, "regress_forces", False):
             self.force_block = ForceBlock(
                 self.sphere_channels_all, self.num_sphere_samples, self.act
@@ -214,9 +206,7 @@ class eSCN(nn.Module):
         # self.atomic_charge_lin = o3.Linear(irreps_in=irreps_in, irreps_out="1x0e")
 
         # Create a roughly evenly distributed point sampling of the sphere for the output blocks
-        self.sphere_points = CalcSpherePoints(
-            self.num_sphere_samples, self.device
-        ).detach()
+        self.sphere_points = CalcSpherePoints(self.num_sphere_samples, self.device).detach()
 
         # For each spherical point, compute the spherical harmonic coefficient weights
         self.sphharm_weights = []
@@ -231,7 +221,7 @@ class eSCN(nn.Module):
 
     def forward(self, data):
         device = data.coords.device
-        
+
         if self.sphere_points.device != device:
             print(f"Moving sphere points and weights to device {device}")
             self.sphere_points = self.sphere_points.to(device)
@@ -241,8 +231,6 @@ class eSCN(nn.Module):
         self.dtype = data.coords.dtype
         atomic_numbers = data.atom_types.long()
         num_atoms = len(atomic_numbers)
-
-        start_time = time.time()
 
         edge_index = data["edge_index"]
         edge_distance_vec, edge_distance = get_edge_vectors_and_lengths(
@@ -256,9 +244,7 @@ class eSCN(nn.Module):
         ###############################################################
 
         # Compute 3x3 rotation matrix per edge
-        edge_rot_mat = self._init_edge_rot_mat(
-            data.coords, edge_index, edge_distance_vec
-        )
+        edge_rot_mat = self._init_edge_rot_mat(data.coords, edge_index, edge_distance_vec)
 
         # Initialize the WignerD matrices and other values for spherical harmonic calculations
         SO3_edge_rot = nn.ModuleList()
@@ -332,17 +318,13 @@ class eSCN(nn.Module):
         L_max = max(self.lmax_list)
         for l_val in range(L_max + 1):
             num_m_components = (2 * l_val) + 1
-            l_block_native = x_emb_native[
-                :, current_lm_idx : current_lm_idx + num_m_components, :
-            ]
+            l_block_native = x_emb_native[:, current_lm_idx : current_lm_idx + num_m_components, :]
             l_block_e3nn_ordered = l_block_native.permute(0, 2, 1).contiguous()
-            e3nn_input_parts.append(
-                l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1)
-            )
+            e3nn_input_parts.append(l_block_e3nn_ordered.reshape(x_emb_native.size(0), -1))
             current_lm_idx += num_m_components
 
         x_pt_for_e3nn = torch.cat(e3nn_input_parts, dim=1)
-        
+
         if getattr(self, "regress_charges", True):
             orbital_charges = self.lin_out(x_pt_for_e3nn)
         else:
@@ -417,9 +399,7 @@ class eSCN(nn.Module):
             world_z_vec,  # Else use world_z
         )
 
-        axis_y = -torch.cross(
-            ref_vec_for_y, axis_z, dim=1
-        )  # Swapped order to get Y before X
+        axis_y = -torch.cross(ref_vec_for_y, axis_z, dim=1)  # Swapped order to get Y before X
         axis_y = axis_y / (torch.norm(axis_y, p=2, dim=1, keepdim=True) + norm_eps)
 
         axis_x = torch.cross(axis_y, axis_z, dim=1)  # axis_y x axis_z = axis_x
@@ -495,13 +475,9 @@ class LayerBlock(torch.nn.Module):
             2 * self.sphere_channels_all, self.sphere_channels_all, bias=False
         )
 
-        self.fc2_sphere = nn.Linear(
-            self.sphere_channels_all, self.sphere_channels_all, bias=False
-        )
+        self.fc2_sphere = nn.Linear(self.sphere_channels_all, self.sphere_channels_all, bias=False)
 
-        self.fc3_sphere = nn.Linear(
-            self.sphere_channels_all, self.sphere_channels_all, bias=False
-        )
+        self.fc3_sphere = nn.Linear(self.sphere_channels_all, self.sphere_channels_all, bias=False)
 
     def forward(
         self,
@@ -744,9 +720,7 @@ class SO2Block(torch.nn.Module):
         offset = mappingReduced.m_size[0]
         for m in range(1, max(self.mmax_list) + 1):
             # Get the m order coefficients
-            x_m = x.embedding[
-                :, offset : offset + 2 * mappingReduced.m_size[m]
-            ].contiguous()
+            x_m = x.embedding[:, offset : offset + 2 * mappingReduced.m_size[m]].contiguous()
             x_m = x_m.view(num_edges, 2, -1)
             # Perform SO(2) convolution
             x_m = self.so2_conv[m - 1](x_m, x_edge)
@@ -1029,26 +1003,18 @@ class EquivariantPopulationPredictor(nn.Module):
 
                 # LINEAR BYPASS: Learn the population trace (0e) and base shapes (2e) linearly
                 self.predict_d_lin = nn.ModuleList(
-                    [
-                        Linear(self.irreps_in, "1x0e + 1x1e + 1x2e")
-                        for _ in range(self.n_d)
-                    ]
+                    [Linear(self.irreps_in, "1x0e + 1x1e + 1x2e") for _ in range(self.n_d)]
                 )
                 # QUADRATIC PATH: Synthesize the missing 4e components via Tensor Product
                 self.predict_d_tp = nn.ModuleList(
                     [
-                        FullyConnectedTensorProduct(
-                            bottleneck, bottleneck, "1x3e + 1x4e"
-                        )
+                        FullyConnectedTensorProduct(bottleneck, bottleneck, "1x3e + 1x4e")
                         for _ in range(self.n_d)
                     ]
                 )
             else:
                 self.predict_d = nn.ModuleList(
-                    [
-                        Linear(self.irreps_in, self.rtp_d.irreps_out)
-                        for _ in range(self.n_d)
-                    ]
+                    [Linear(self.irreps_in, self.rtp_d.irreps_out) for _ in range(self.n_d)]
                 )
 
     def forward(self, x):
@@ -1112,9 +1078,7 @@ class InvariantPopulationPredictor(nn.Module):
 
         # e3nn's Linear automatically maps the 0e inputs to 0e outputs.
         # It rigorously zeroes out any connection to the 1o, 2e, 3o, and 4e features.
-        self.predict_invariant = Linear(
-            self.irreps_in, f"{self.total_scalar_outputs}x0e"
-        )
+        self.predict_invariant = Linear(self.irreps_in, f"{self.total_scalar_outputs}x0e")
 
     def forward(self, x):
         # x contains the full geometric embedding.

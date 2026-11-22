@@ -30,9 +30,7 @@ class GaussianSmearing(torch.nn.Module):
 
 
 class SigmoidSmearing(torch.nn.Module):
-    def __init__(
-        self, start=-5.0, stop=5.0, num_sigmoid=50, basis_width_scalar=1.0
-    ) -> None:
+    def __init__(self, start=-5.0, stop=5.0, num_sigmoid=50, basis_width_scalar=1.0) -> None:
         super(SigmoidSmearing, self).__init__()
         self.num_output = num_sigmoid
         offset = torch.linspace(start, stop, num_sigmoid)

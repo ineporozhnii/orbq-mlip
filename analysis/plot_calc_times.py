@@ -41,9 +41,13 @@ def _members(tar_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--tar", type=Path, required=True, help="Packed dataset (prepared/tar/dataset.tar).")
+    parser.add_argument(
+        "--tar", type=Path, required=True, help="Packed dataset (prepared/tar/dataset.tar)."
+    )
     parser.add_argument("--out", type=Path, default=Path("calc_time_histogram.png"))
-    parser.add_argument("--cache", type=Path, default=None, help="Optional .npy cache of extracted times.")
+    parser.add_argument(
+        "--cache", type=Path, default=None, help="Optional .npy cache of extracted times."
+    )
     parser.add_argument("--num-workers", type=int, default=8)
     args = parser.parse_args(argv)
 
@@ -52,7 +56,13 @@ def main(argv=None):
     else:
         with mp.Pool(args.num_workers) as pool:
             calc_times = np.array(
-                [t for t in tqdm(pool.imap_unordered(_calc_time, _members(args.tar), chunksize=100)) if t is not None]
+                [
+                    t
+                    for t in tqdm(
+                        pool.imap_unordered(_calc_time, _members(args.tar), chunksize=100)
+                    )
+                    if t is not None
+                ]
             )
         if args.cache is not None:
             np.save(args.cache, calc_times)
@@ -65,7 +75,11 @@ def main(argv=None):
 
     plt.figure(figsize=(6, 6))
     plt.hist(
-        calc_times, bins=50, alpha=0.75, color="cornflowerblue", edgecolor="black",
+        calc_times,
+        bins=50,
+        alpha=0.75,
+        color="cornflowerblue",
+        edgecolor="black",
         label=f"Mean: {mean_time:.3f} s\nMedian: {median_time:.3f} s",
     )
     plt.xlabel("Calculation time (s)", fontsize=20)

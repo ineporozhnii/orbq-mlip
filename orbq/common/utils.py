@@ -1,5 +1,6 @@
-from typing import Tuple
 import itertools
+from typing import Tuple
+
 import torch
 
 # NOTE: future versions could consider more supercells.

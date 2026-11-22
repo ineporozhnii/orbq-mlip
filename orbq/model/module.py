@@ -1,6 +1,6 @@
 import torch
-from lightning import LightningModule
 from hydra.utils import instantiate
+from lightning import LightningModule
 from torch_ema import ExponentialMovingAverage
 
 from orbq.common.utils import scatter
@@ -29,12 +29,10 @@ class MultitaskLightningModule(LightningModule):
         if self.hparams.train.get("freeze_backbone", False):
             self.freeze_backbone()
 
-        self.ema = ExponentialMovingAverage(
-            self.parameters(), decay=self.hparams.train.ema.decay
-        )
+        self.ema = ExponentialMovingAverage(self.parameters(), decay=self.hparams.train.ema.decay)
         self.distributed = (
-            isinstance(self.hparams.train.trainer.strategy, str) and 
-            "ddp" in self.hparams.train.trainer.strategy.lower()
+            isinstance(self.hparams.train.trainer.strategy, str)
+            and "ddp" in self.hparams.train.trainer.strategy.lower()
         ) and (self.hparams.train.trainer.devices > 1)
         self.register_buffer(
             "scale_energy",
@@ -42,33 +40,23 @@ class MultitaskLightningModule(LightningModule):
         )
         self.register_buffer(
             "scale_atomic_charges_dxtb",
-            torch.FloatTensor(
-                [self.hparams.metadata["atomic_charges_dxtb_var"]]
-            ).sqrt(),
+            torch.FloatTensor([self.hparams.metadata["atomic_charges_dxtb_var"]]).sqrt(),
         )
         self.register_buffer(
             "scale_atomic_charges_lowdin",
-            torch.FloatTensor(
-                [self.hparams.metadata["atomic_charges_lowdin_var"]]
-            ).sqrt(),
+            torch.FloatTensor([self.hparams.metadata["atomic_charges_lowdin_var"]]).sqrt(),
         )
         self.register_buffer(
             "scale_atomic_charges_mulliken",
-            torch.FloatTensor(
-                [self.hparams.metadata["atomic_charges_mulliken_var"]]
-            ).sqrt(),
+            torch.FloatTensor([self.hparams.metadata["atomic_charges_mulliken_var"]]).sqrt(),
         )
         self.register_buffer(
             "scale_orbital_charges_dxtb",
-            torch.FloatTensor(
-                [self.hparams.metadata["orbital_charges_dxtb_var"]]
-            ).sqrt(),
+            torch.FloatTensor([self.hparams.metadata["orbital_charges_dxtb_var"]]).sqrt(),
         )
         self.register_buffer(
             "scale_forces",
-            torch.FloatTensor(
-                [self.hparams.metadata.get("forces_var", 1.0)]
-            ).sqrt(),
+            torch.FloatTensor([self.hparams.metadata.get("forces_var", 1.0)]).sqrt(),
         )
 
     def construct_orbitals(self):
@@ -77,9 +65,7 @@ class MultitaskLightningModule(LightningModule):
 
         gto_dict = {}
         for elem in unique_atom_types:
-            gto_dict[str(elem)] = GTOs(
-                **basis_set[elem], cutoff=self.hparams.orb_cutoff
-            )
+            gto_dict[str(elem)] = GTOs(**basis_set[elem], cutoff=self.hparams.orb_cutoff)
 
         self.register_buffer("unique_atom_types", torch.tensor(unique_atom_types))
         self.register_buffer(
@@ -105,10 +91,12 @@ class MultitaskLightningModule(LightningModule):
             (2 * torch.arange(len(self.max_n_orbitals_per_L)) + 1) ** 2
         )
         self.max_matrix_dim = int(self.max_matrix_dim_per_L.sum())
-        
-        self.max_dataset_matrix_dim_per_L = (self.max_n_orbitals_per_L * (2 * torch.arange(len(self.max_n_orbitals_per_L)) + 1)) ** 2
+
+        self.max_dataset_matrix_dim_per_L = (
+            self.max_n_orbitals_per_L * (2 * torch.arange(len(self.max_n_orbitals_per_L)) + 1)
+        ) ** 2
         self.max_dataset_matrix_dim = int(self.max_dataset_matrix_dim_per_L.sum())
-        
+
         dataset_orb_index = torch.zeros(
             max(unique_atom_types) + 1, self.max_dataset_matrix_dim, dtype=torch.bool
         )
@@ -116,9 +104,7 @@ class MultitaskLightningModule(LightningModule):
             max(unique_atom_types) + 1, self.max_dataset_matrix_dim, dtype=torch.bool
         )
 
-        orb_index = torch.zeros(
-            max(unique_atom_types) + 1, self.max_outdim, dtype=torch.bool
-        )
+        orb_index = torch.zeros(max(unique_atom_types) + 1, self.max_outdim, dtype=torch.bool)
         matrix_orb_index = torch.zeros(
             max(unique_atom_types) + 1, self.max_matrix_dim, dtype=torch.bool
         )
@@ -127,18 +113,14 @@ class MultitaskLightningModule(LightningModule):
         )
 
         orb_per_shell = torch.zeros(max(unique_atom_types) + 1, 2, dtype=torch.int64)
-        offsets = torch.cat(
-            [torch.tensor([0]), torch.cumsum(self.max_outdim_per_L, dim=0)]
-        )
+        offsets = torch.cat([torch.tensor([0]), torch.cumsum(self.max_outdim_per_L, dim=0)])
         matrix_offsets = torch.cat(
             [torch.tensor([0]), torch.cumsum(self.max_matrix_dim_per_L, dim=0)]
         )
         dataset_matrix_offsets = torch.cat(
             [torch.tensor([0]), torch.cumsum(self.max_dataset_matrix_dim_per_L, dim=0)]
         )
-        L_index = torch.zeros(
-            max(unique_atom_types) + 1, self.max_n_Ls, dtype=torch.bool
-        )
+        L_index = torch.zeros(max(unique_atom_types) + 1, self.max_n_Ls, dtype=torch.bool)
         for k, v in gto_dict.items():
             index = torch.cat(
                 [
@@ -161,23 +143,23 @@ class MultitaskLightningModule(LightningModule):
                     diag_offsets = torch.arange(2 * l + 1) * (2 * l + 2)
                     for orb_idx in range(n_orbs):
                         diag_mapping_list.append(
-                            matrix_offsets[l]
-                            + orb_idx * (2 * l + 1) ** 2
-                            + diag_offsets
+                            matrix_offsets[l] + orb_idx * (2 * l + 1) ** 2 + diag_offsets
                         )
-                    
+
                     dim_l = n_orbs * (2 * l + 1)
-                    full_mat_dim = dim_l ** 2
+                    full_mat_dim = dim_l**2
                     block_start = dataset_matrix_offsets[l]
                     dataset_orb_index[int(k), block_start : block_start + full_mat_dim] = True
-                    
+
                     local_mask = torch.zeros(dim_l, dim_l, dtype=torch.bool)
                     for i in range(n_orbs):
                         start = i * (2 * l + 1)
                         end = (i + 1) * (2 * l + 1)
                         local_mask[start:end, start:end] = True
-                    
-                    dataset_to_model_mask[int(k), block_start : block_start + full_mat_dim] = local_mask.flatten()
+
+                    dataset_to_model_mask[int(k), block_start : block_start + full_mat_dim] = (
+                        local_mask.flatten()
+                    )
 
             if matrix_index_list:
                 matrix_index = torch.cat(matrix_index_list)
@@ -235,28 +217,30 @@ class MultitaskLightningModule(LightningModule):
             pred_forces = None
 
         pred_energy = energy * self.scale_energy if energy is not None else None
-        target_energy = getattr(batch, 'energy', None)
+        target_energy = getattr(batch, "energy", None)
 
         loss_coeffs = getattr(self.hparams, "loss_coeffs", {})
         loss = 0.0
-        
+
         pred_charges_diag = None
         target_charges_diag = None
         pred_charges = None
         target_charges = None
         scale_charges = 1.0
-        
-        if getattr(self.model, "regress_charges", True) and (orbital_charges is not None or atomic_charges is not None):
-            if getattr(self.hparams, 'charges_type', 'none') == "orbital_dxtb":
+
+        if getattr(self.model, "regress_charges", True) and (
+            orbital_charges is not None or atomic_charges is not None
+        ):
+            if getattr(self.hparams, "charges_type", "none") == "orbital_dxtb":
                 full_target_charges = batch.orbital_charges_dxtb
-                dset_mask = self.dataset_to_model_mask[batch.atom_types][self.dataset_orb_index[batch.atom_types]]
+                dset_mask = self.dataset_to_model_mask[batch.atom_types][
+                    self.dataset_orb_index[batch.atom_types]
+                ]
                 target_charges = full_target_charges[dset_mask]
 
                 # Since target_charges are now full matrices, we mask pred_charges with matrix_orb_index
                 mask = self.matrix_orb_index[batch.atom_types].flatten()
-                pred_charges = (
-                    orbital_charges.flatten()[mask] * self.scale_orbital_charges_dxtb
-                )
+                pred_charges = orbital_charges.flatten()[mask] * self.scale_orbital_charges_dxtb
                 scale_charges = self.scale_orbital_charges_dxtb
 
                 # Extract diagonals for metrics
@@ -271,9 +255,7 @@ class MultitaskLightningModule(LightningModule):
                 pred_charges_diag = pred_charges_diag_pad[self.orb_index[batch.atom_types]]
 
                 # Apply orbital charge correction to enforce total charge constraint
-                corrected_charges_diag = self.orbital_charge_correction(
-                    batch, pred_charges_diag
-                )
+                corrected_charges_diag = self.orbital_charge_correction(batch, pred_charges_diag)
 
                 # Calculate the difference to shift the diagonal
                 correction_diff = corrected_charges_diag - pred_charges_diag
@@ -298,27 +280,25 @@ class MultitaskLightningModule(LightningModule):
                 target_charges_diag_pad = torch.gather(
                     target_mat_pad, 1, self.diag_in_matrix_index[batch.atom_types]
                 )
-                target_charges_diag = target_charges_diag_pad[
-                    self.orb_index[batch.atom_types]
-                ]
+                target_charges_diag = target_charges_diag_pad[self.orb_index[batch.atom_types]]
 
                 self.pred_charges_diag = corrected_charges_diag
                 self.target_charges_diag = target_charges_diag
 
             elif self.hparams.charges_type == "atomic_dxtb":
-                target_charges = getattr(batch, 'atomic_charges_dxtb', None)
+                target_charges = getattr(batch, "atomic_charges_dxtb", None)
                 pred_charges = atomic_charges * self.scale_atomic_charges_dxtb
                 scale_charges = self.scale_atomic_charges_dxtb
                 self.pred_charges_diag = pred_charges
                 self.target_charges_diag = target_charges
             elif self.hparams.charges_type == "atomic_lowdin":
-                target_charges = getattr(batch, 'atomic_charges_lowdin', None)
+                target_charges = getattr(batch, "atomic_charges_lowdin", None)
                 pred_charges = atomic_charges * self.scale_atomic_charges_lowdin
                 scale_charges = self.scale_atomic_charges_lowdin
                 self.pred_charges_diag = pred_charges
                 self.target_charges_diag = target_charges
             elif self.hparams.charges_type == "atomic_mulliken":
-                target_charges = getattr(batch, 'atomic_charges_mulliken', None)
+                target_charges = getattr(batch, "atomic_charges_mulliken", None)
                 pred_charges = atomic_charges * self.scale_atomic_charges_mulliken
                 scale_charges = self.scale_atomic_charges_mulliken
                 self.pred_charges_diag = pred_charges
@@ -327,41 +307,61 @@ class MultitaskLightningModule(LightningModule):
             self.pred_charges_diag = None
             self.target_charges_diag = None
 
-        if getattr(self.hparams, 'criterion', 'mse') == "mse":
-            if loss_coeffs.get("energy", 0.0) > 0.0 and target_energy is not None and pred_energy is not None:
+        if getattr(self.hparams, "criterion", "mse") == "mse":
+            if (
+                loss_coeffs.get("energy", 0.0) > 0.0
+                and target_energy is not None
+                and pred_energy is not None
+            ):
                 loss_energy = (
                     (pred_energy / self.scale_energy - target_energy / self.scale_energy)
                     .pow(2)
                     .mean()
                 )
                 loss += loss_coeffs["energy"] * loss_energy
-            if loss_coeffs.get("charges", 0.0) > 0.0 and pred_charges is not None and target_charges is not None:
+            if (
+                loss_coeffs.get("charges", 0.0) > 0.0
+                and pred_charges is not None
+                and target_charges is not None
+            ):
                 loss_charges = (
-                    (pred_charges / scale_charges - target_charges / scale_charges)
-                    .pow(2)
-                    .mean()
+                    (pred_charges / scale_charges - target_charges / scale_charges).pow(2).mean()
                 )
                 loss += loss_coeffs["charges"] * loss_charges
-            if loss_coeffs.get("forces", 0.0) > 0.0 and pred_forces is not None and hasattr(batch, "forces"):
+            if (
+                loss_coeffs.get("forces", 0.0) > 0.0
+                and pred_forces is not None
+                and hasattr(batch, "forces")
+            ):
                 target_forces = batch.forces
                 loss_forces = (pred_forces - target_forces).pow(2).mean()
                 loss += loss_coeffs["forces"] * loss_forces
         elif self.hparams.criterion == "mae":
-            if loss_coeffs.get("energy", 0.0) > 0.0 and target_energy is not None and pred_energy is not None:
+            if (
+                loss_coeffs.get("energy", 0.0) > 0.0
+                and target_energy is not None
+                and pred_energy is not None
+            ):
                 loss_energy = (
                     (pred_energy / self.scale_energy - target_energy / self.scale_energy)
                     .abs()
                     .mean()
                 )
                 loss += loss_coeffs["energy"] * loss_energy
-            if loss_coeffs.get("charges", 0.0) > 0.0 and pred_charges is not None and target_charges is not None:
+            if (
+                loss_coeffs.get("charges", 0.0) > 0.0
+                and pred_charges is not None
+                and target_charges is not None
+            ):
                 loss_charges = (
-                    (pred_charges / scale_charges - target_charges / scale_charges)
-                    .abs()
-                    .mean()
+                    (pred_charges / scale_charges - target_charges / scale_charges).abs().mean()
                 )
                 loss += loss_coeffs["charges"] * loss_charges
-            if loss_coeffs.get("forces", 0.0) > 0.0 and pred_forces is not None and hasattr(batch, "forces"):
+            if (
+                loss_coeffs.get("forces", 0.0) > 0.0
+                and pred_forces is not None
+                and hasattr(batch, "forces")
+            ):
                 target_forces = batch.forces
                 loss_forces = (pred_forces - target_forces).abs().mean()
                 loss += loss_coeffs["forces"] * loss_forces
@@ -393,7 +393,7 @@ class MultitaskLightningModule(LightningModule):
         log_dict = {}
         if isinstance(loss, torch.Tensor) and loss.requires_grad:
             log_dict["loss/train"] = loss
-            
+
         if pred_energy is not None and target_energy is not None:
             log_dict["mse/train_energy"] = (pred_energy - target_energy).pow(2).mean().item()
             log_dict["mae/train_energy"] = (pred_energy - target_energy).abs().mean().item()
@@ -407,17 +407,11 @@ class MultitaskLightningModule(LightningModule):
             )
 
         if pred_forces is not None and target_forces is not None:
-            log_dict["mse/train_forces"] = (
-                (pred_forces - target_forces).pow(2).mean().item()
-            )
-            log_dict["mae/train_forces"] = (
-                (pred_forces - target_forces).abs().mean().item()
-            )
+            log_dict["mse/train_forces"] = (pred_forces - target_forces).pow(2).mean().item()
+            log_dict["mae/train_forces"] = (pred_forces - target_forces).abs().mean().item()
 
         if log_dict:
-            self.log_dict(
-                log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
-            )
+            self.log_dict(log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -448,17 +442,11 @@ class MultitaskLightningModule(LightningModule):
             )
 
         if pred_forces is not None and target_forces is not None:
-            log_dict["mse/val_forces"] = (
-                (pred_forces - target_forces).pow(2).mean().item()
-            )
-            log_dict["mae/val_forces"] = (
-                (pred_forces - target_forces).abs().mean().item()
-            )
+            log_dict["mse/val_forces"] = (pred_forces - target_forces).pow(2).mean().item()
+            log_dict["mae/val_forces"] = (pred_forces - target_forces).abs().mean().item()
 
         if log_dict:
-            self.log_dict(
-                log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
-            )
+            self.log_dict(log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed)
 
         ret_dict = {
             "n_atom": batch.n_atom,
@@ -467,7 +455,7 @@ class MultitaskLightningModule(LightningModule):
         }
         if isinstance(loss, torch.Tensor):
             ret_dict["loss"] = loss
-            
+
         if pred_energy is not None and target_energy is not None:
             ret_dict["pred_energy"] = pred_energy
             ret_dict["target_energy"] = target_energy
@@ -508,17 +496,11 @@ class MultitaskLightningModule(LightningModule):
             )
 
         if pred_forces is not None and target_forces is not None:
-            log_dict["mse/test_forces"] = (
-                (pred_forces - target_forces).pow(2).mean().item()
-            )
-            log_dict["mae/test_forces"] = (
-                (pred_forces - target_forces).abs().mean().item()
-            )
+            log_dict["mse/test_forces"] = (pred_forces - target_forces).pow(2).mean().item()
+            log_dict["mae/test_forces"] = (pred_forces - target_forces).abs().mean().item()
 
         if log_dict:
-            self.log_dict(
-                log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed
-            )
+            self.log_dict(log_dict, batch_size=batch["cell"].shape[0], sync_dist=self.distributed)
         return loss
 
     def configure_optimizers(self):
@@ -573,9 +555,7 @@ class MultitaskLightningModule(LightningModule):
         self.ema.update(self.parameters())
 
     def on_after_backward(self):
-        total_norm = torch.nn.utils.clip_grad_norm_(
-            self.parameters(), float("inf"), norm_type=2.0
-        )
+        total_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), float("inf"), norm_type=2.0)
         self.log("trainer/grad_norm", total_norm)
 
     def freeze_backbone(self):

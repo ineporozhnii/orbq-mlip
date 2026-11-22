@@ -1,23 +1,21 @@
-import logging
 import json
-from typing import List
-from pathlib import Path
-
+import logging
 import os
+from pathlib import Path
+from typing import List
+
 import hydra
 import lightning.pytorch as pl
 import omegaconf
 import torch
-from lightning.pytorch import Callback
-from omegaconf import DictConfig, ListConfig
-
-from lightning.pytorch import seed_everything
-from lightning.pytorch.loggers import WandbLogger, TensorBoardLogger
-
-from orbq.common.system import log_hyperparameters
+from lightning.pytorch import Callback, seed_everything
+from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 
 # NOTE: disable slurm detection of lightning
 from lightning.pytorch.plugins.environments import SLURMEnvironment
+from omegaconf import DictConfig, ListConfig
+
+from orbq.common.system import log_hyperparameters
 
 SLURMEnvironment.detect = lambda: False
 
@@ -64,9 +62,7 @@ def run(cfg: DictConfig) -> str:
 
     # Instantiate datamodule
     pylogger.info(f"Instantiating <{cfg.data['_target_']}>")
-    datamodule: pl.LightningDataModule = hydra.utils.instantiate(
-        cfg.data, _recursive_=False
-    )
+    datamodule: pl.LightningDataModule = hydra.utils.instantiate(cfg.data, _recursive_=False)
     datamodule.setup(stage="fit")
 
     metadata = getattr(datamodule, "metadata", None)
@@ -100,9 +96,7 @@ def run(cfg: DictConfig) -> str:
         )
     else:
         logger = TensorBoardLogger(**cfg.train.logging.tensorboard)
-        pylogger.info(
-            f"TensorBoard Logger logs into <{cfg.train.logging.tensorboard.save_dir}>."
-        )
+        pylogger.info(f"TensorBoard Logger logs into <{cfg.train.logging.tensorboard.save_dir}>.")
 
     ckpt = None
 
@@ -146,10 +140,7 @@ def run(cfg: DictConfig) -> str:
         weights_only=False,
     )
 
-    if (
-        datamodule.test_dataset is not None
-        and trainer.checkpoint_callback.best_model_path
-    ):
+    if datamodule.test_dataset is not None and trainer.checkpoint_callback.best_model_path:
         pylogger.info("starting testing.")
         trainer.test(dataloaders=[datamodule.test_dataloader()])
 

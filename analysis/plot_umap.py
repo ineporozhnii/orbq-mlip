@@ -27,7 +27,23 @@ import numpy as np
 import torch
 
 # transition metals shown in Fig. 3 (override with --elements)
-DEFAULT_ELEMENTS = ["Fe", "Co", "Ni", "Cu", "Zn", "Mo", "Ru", "Rh", "Pd", "Ag", "Ta", "W", "Ir", "Pt", "Au"]
+DEFAULT_ELEMENTS = [
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+    "Mo",
+    "Ru",
+    "Rh",
+    "Pd",
+    "Ag",
+    "Ta",
+    "W",
+    "Ir",
+    "Pt",
+    "Au",
+]
 
 SYMBOLS = (
     "X H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr "
@@ -65,24 +81,57 @@ def plot_panels(panels, elements, out, max_atoms=None, seed=42):
             ax.text(0.5, 0.5, "no metal atoms", ha="center", va="center")
             ax.axis("off")
             continue
-        xy = umap.UMAP(n_neighbors=min(15, len(z) - 1), min_dist=0.1, random_state=seed).fit_transform(emb)
-        ax.scatter(xy[:, 0], xy[:, 1], c=[color[v] for v in z], s=30, alpha=0.7, edgecolors="black", linewidth=0.3)
+        xy = umap.UMAP(
+            n_neighbors=min(15, len(z) - 1), min_dist=0.1, random_state=seed
+        ).fit_transform(emb)
+        ax.scatter(
+            xy[:, 0],
+            xy[:, 1],
+            c=[color[v] for v in z],
+            s=30,
+            alpha=0.7,
+            edgecolors="black",
+            linewidth=0.3,
+        )
         texts = []
         for v in np.unique(z):
             cx, cy = np.median(xy[z == v], axis=0)
             seen.add(v)
-            texts.append(ax.text(cx, cy, SYMBOLS[v], fontsize=14, fontweight="bold", ha="center", va="center",
-                                 bbox=dict(boxstyle="round,pad=0.2", fc=(1, 1, 1, 0.8), ec="black", lw=0.5)))
+            texts.append(
+                ax.text(
+                    cx,
+                    cy,
+                    SYMBOLS[v],
+                    fontsize=14,
+                    fontweight="bold",
+                    ha="center",
+                    va="center",
+                    bbox=dict(boxstyle="round,pad=0.2", fc=(1, 1, 1, 0.8), ec="black", lw=0.5),
+                )
+            )
         if adjust_text is not None:
             adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle="->", color="black", lw=1.0))
         ax.set_title(title, fontsize=14)
         ax.set_xticks([])
         ax.set_yticks([])
 
-    for ax in axes[len(panels):]:
+    for ax in axes[len(panels) :]:
         ax.axis("off")
-    handles = [plt.Line2D([0], [0], marker="o", color="w", label=SYMBOLS[v], markerfacecolor=color[v],
-                          markersize=10, markeredgecolor="black", markeredgewidth=0.5) for v in zs if v in seen]
+    handles = [
+        plt.Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            label=SYMBOLS[v],
+            markerfacecolor=color[v],
+            markersize=10,
+            markeredgecolor="black",
+            markeredgewidth=0.5,
+        )
+        for v in zs
+        if v in seen
+    ]
     axes[-1].legend(handles=handles, loc="center", ncol=3, frameon=False, fontsize=14)
     fig.tight_layout()
     fig.savefig(out, dpi=300, bbox_inches="tight")
@@ -91,10 +140,20 @@ def plot_panels(panels, elements, out, max_atoms=None, seed=42):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--panel", nargs=2, action="append", metavar=("TITLE", "RESULTS_PT"), required=True,
-                        help="Panel title and orbq-test results file saved with --save_emb (repeatable).")
-    parser.add_argument("--elements", nargs="+", default=DEFAULT_ELEMENTS, help="Element symbols to include.")
-    parser.add_argument("--max-atoms", type=int, default=None, help="Use only the first N atoms of each file.")
+    parser.add_argument(
+        "--panel",
+        nargs=2,
+        action="append",
+        metavar=("TITLE", "RESULTS_PT"),
+        required=True,
+        help="Panel title and orbq-test results file saved with --save_emb (repeatable).",
+    )
+    parser.add_argument(
+        "--elements", nargs="+", default=DEFAULT_ELEMENTS, help="Element symbols to include."
+    )
+    parser.add_argument(
+        "--max-atoms", type=int, default=None, help="Use only the first N atoms of each file."
+    )
     parser.add_argument("--out", default="umap_metal_clusters.png")
     args = parser.parse_args(argv)
     plot_panels(args.panel, args.elements, args.out, args.max_atoms)

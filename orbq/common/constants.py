@@ -403,9 +403,7 @@ main_group = set(
     ]
 )
 
-metals = (
-    main_group | alkaline_earth | alkali | transition_metals | metalloids | lanthanides
-)
+metals = main_group | alkaline_earth | alkali | transition_metals | metalloids | lanthanides
 
 
 orbital_config = {

@@ -5,12 +5,13 @@ adapted from:
 https://github.com/kyonofx/scdp/blob/main/scdp/model/basis_set.py
 """
 
-import os
 import itertools
+import os
+
+import basis_set_exchange as bse
 import numpy as np
 
 from orbq.common.constants import orbital_config
-import basis_set_exchange as bse
 
 
 def get_basis_set(name="def2-universal-JKFIT"):
@@ -166,7 +167,6 @@ def aug_etb_for_basis(basis, beta=2.0, lmax_restriction=False, lmax_relax=0):
         emax_by_l = [0] * 8
         l_max = 0
         for b in basis_to_pyscf(basis[atomic_number]):
-
             l = b[0]
             l_max = max(l_max, l)
 
@@ -239,9 +239,7 @@ def load_xtb_basis(name):
         file_path = os.path.join(folder_path, filename)
         # Read the NWChem formatted basis file.
         # This returns a dict: {z_str: {'electron_shells': [...], 'references': [...]}, ...}
-        elemental_data_dict = bse.readers.read_formatted_basis_file(
-            file_path, basis_fmt="nwchem"
-        )
+        elemental_data_dict = bse.readers.read_formatted_basis_file(file_path, basis_fmt="nwchem")
 
         for z_str, el_data in elemental_data_dict["elements"].items():
             if z_str == "1":
@@ -249,9 +247,9 @@ def load_xtb_basis(name):
                     for j in range(len(el_data["electron_shells"][i]["coefficients"])):
                         el_data["electron_shells"][i]["coefficients"][j] = [0]
                     el_data["electron_shells"][i]["exponents"] = [0]
-                    el_data["electron_shells"][i]["angular_momentum"] = el_data[
-                        "electron_shells"
-                    ][i]["angular_momentum"][0]
+                    el_data["electron_shells"][i]["angular_momentum"] = el_data["electron_shells"][
+                        i
+                    ]["angular_momentum"][0]
             else:
                 for i in range(len(el_data["electron_shells"])):
                     for j in range(len(el_data["electron_shells"][i]["coefficients"])):
